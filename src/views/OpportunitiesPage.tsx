@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import {
@@ -8,9 +8,11 @@ import {
   listOpportunities,
   scheduleSiteVisit,
   type ChangeOpportunityStagePayload,
-  type Opportunity
+  type Opportunity,
+  type OpportunityDetail
 } from "../api/opportunities";
 import { getReferenceFamily } from "../api/reference-data";
+import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type StageFormValues = {
   opportunityStageRefId: string;
@@ -33,11 +35,70 @@ function pickString(value: string) {
 }
 
 function pickNumber(value: string) {
-  return value.trim() === "" ? undefined : Number(value);
+  const normalized = value.replace("%", "").replace(/,/g, "").trim();
+  return normalized === "" ? undefined : Number(normalized);
 }
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
+}
+
+const opportunityStageOrder = ["Open", "Qualified", "Site Visit", "Negotiation", "Proposal", "Reservation Ready", "Won"];
+
+function opportunityWorkflowSteps(opportunity: OpportunityDetail): WorkflowStep[] {
+  const historyByStage = new Map(opportunity.stageHistory.map((entry) => [entry.opportunityStage.name ?? "", entry]));
+  const currentStageName = opportunity.opportunityStage.name ?? "Qualified";
+  const currentIndex = Math.max(opportunityStageOrder.indexOf(currentStageName), 0);
+
+  return opportunityStageOrder.map((stageName, index) => {
+    const history = historyByStage.get(stageName);
+    const isCompleted = Boolean(history) || index < currentIndex;
+    const isCurrent = stageName === currentStageName;
+
+    return {
+      id: stageName,
+      title: stageName,
+      status: isCurrent ? "current" : isCompleted ? "completed" : "next",
+      timestamp: history?.changedAt ?? (isCurrent ? opportunity.updatedAt : null),
+      user: history?.changedByUser.name ?? (isCurrent ? opportunity.updatedBy.name : null),
+      role: history?.changedByRole ?? "CRM User",
+      summary:
+        history?.remarks ??
+        (isCurrent ? opportunity.remarks : index === currentIndex + 1 ? "This is the next suggested workflow stage." : null),
+      details: [
+        { label: "Probability", value: history?.probabilityPercent ?? (isCurrent ? opportunity.probabilityPercent : null) },
+        { label: "Budget", value: opportunity.budgetAmount ? `${opportunity.budgetAmount.toLocaleString()} ${opportunity.currencyCode ?? ""}` : null },
+        { label: "Project", value: opportunity.projectCode },
+        { label: "Unit", value: opportunity.proposedUnitCode },
+        { label: "Expected Close", value: opportunity.expectedCloseDate },
+        { label: "Customer", value: opportunity.customer.name },
+        { label: "Opportunity", value: opportunity.opportunityNo }
+      ]
+    };
+  });
+}
+
+function nextOpportunityStageName(currentStageName: string | null | undefined) {
+  const currentIndex = opportunityStageOrder.indexOf(currentStageName ?? "");
+  if (currentIndex < 0) return "Site Visit";
+  return opportunityStageOrder[currentIndex + 1] ?? null;
+}
+
+function suggestedProbability(stageName: string | null) {
+  switch (stageName) {
+    case "Site Visit":
+      return "45";
+    case "Negotiation":
+      return "60";
+    case "Proposal":
+      return "75";
+    case "Reservation Ready":
+      return "85";
+    case "Won":
+      return "100";
+    default:
+      return "";
+  }
 }
 
 export function OpportunitiesPage() {
@@ -118,6 +179,18 @@ export function OpportunitiesPage() {
 
   const selectedOpportunity = opportunityDetailQuery.data;
   const opportunityRows = opportunitiesQuery.data?.items ?? [];
+  const nextStageName = nextOpportunityStageName(selectedOpportunity?.opportunityStage.name);
+  const nextStage = (stagesQuery.data ?? []).find((stage) => stage.level2Name === nextStageName);
+
+  useEffect(() => {
+    if (!selectedOpportunity || !nextStage) return;
+
+    stageForm.reset({
+      opportunityStageRefId: nextStage.id,
+      probabilityPercent: suggestedProbability(nextStage.level2Name),
+      remarks: ""
+    });
+  }, [nextStage, selectedOpportunity?.id, selectedOpportunity, stageForm]);
 
   const stats = useMemo(() => {
     const open = opportunityRows.filter((opportunity) => opportunity.status === "OPEN").length;
@@ -182,63 +255,62 @@ export function OpportunitiesPage() {
 
       {errorMessage ? <div className="crm-error-banner">{errorMessage}</div> : null}
 
-      <div className="crm-lead-layout">
-        <section className="crm-panel">
-          <div className="crm-panel-header">
-            <h3>Pipeline</h3>
-            <input
-              className="crm-input crm-search-input"
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search opportunity, customer, lead, project"
-              value={search}
-            />
-          </div>
+      <section className="crm-panel">
+        <div className="crm-panel-header">
+          <h3>Pipeline</h3>
+          <input
+            className="crm-input crm-search-input"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search opportunity, customer, lead, project"
+            value={search}
+          />
+        </div>
 
-          <div className="crm-table-wrap">
-            <table className="crm-table">
-              <thead>
-                <tr>
-                  <th>Opportunity</th>
-                  <th>Customer</th>
-                  <th>Stage</th>
-                  <th>Probability</th>
-                  <th>Budget</th>
-                  <th>Project</th>
+        <div className="crm-table-wrap">
+          <table className="crm-table">
+            <thead>
+              <tr>
+                <th>Opportunity</th>
+                <th>Customer</th>
+                <th>Stage</th>
+                <th>Probability</th>
+                <th>Budget</th>
+                <th>Project</th>
+              </tr>
+            </thead>
+            <tbody>
+              {opportunityRows.map((opportunity: Opportunity) => (
+                <tr
+                  className={selectedOpportunityId === opportunity.id ? "is-selected" : ""}
+                  key={opportunity.id}
+                  onClick={() => setSelectedOpportunityId(opportunity.id)}
+                >
+                  <td>
+                    <strong>{opportunity.opportunityNo}</strong>
+                    <span>{opportunity.lead.leadNo ?? "Manual opportunity"}</span>
+                  </td>
+                  <td>{opportunity.customer.name ?? "-"}</td>
+                  <td>{opportunity.opportunityStage.name ?? "-"}</td>
+                  <td>{opportunity.probabilityPercent ?? "-"}%</td>
+                  <td>
+                    {opportunity.budgetAmount?.toLocaleString() ?? "-"} {opportunity.currencyCode ?? ""}
+                  </td>
+                  <td>{opportunity.projectCode ?? "-"}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {opportunityRows.map((opportunity: Opportunity) => (
-                  <tr
-                    className={selectedOpportunityId === opportunity.id ? "is-selected" : ""}
-                    key={opportunity.id}
-                    onClick={() => setSelectedOpportunityId(opportunity.id)}
-                  >
-                    <td>
-                      <strong>{opportunity.opportunityNo}</strong>
-                      <span>{opportunity.lead.leadNo ?? "Manual opportunity"}</span>
-                    </td>
-                    <td>{opportunity.customer.name ?? "-"}</td>
-                    <td>{opportunity.opportunityStage.name ?? "-"}</td>
-                    <td>{opportunity.probabilityPercent ?? "-"}%</td>
-                    <td>
-                      {opportunity.budgetAmount?.toLocaleString() ?? "-"} {opportunity.currencyCode ?? ""}
-                    </td>
-                    <td>{opportunity.projectCode ?? "-"}</td>
-                  </tr>
-                ))}
-                {opportunityRows.length === 0 ? (
-                  <tr>
-                    <td className="crm-empty-cell" colSpan={6}>
-                      No opportunities found.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              ))}
+              {opportunityRows.length === 0 ? (
+                <tr>
+                  <td className="crm-empty-cell" colSpan={6}>
+                    No opportunities found.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-        <aside className="crm-panel crm-detail-panel">
+      <section className="crm-panel crm-lead-detail-wide">
           <h3>Opportunity Detail</h3>
           {selectedOpportunity ? (
             <>
@@ -249,6 +321,7 @@ export function OpportunitiesPage() {
                 </div>
                 <span className="crm-status-pill">{selectedOpportunity.opportunityStage.name ?? selectedOpportunity.status}</span>
               </div>
+              <WorkflowTracker steps={opportunityWorkflowSteps(selectedOpportunity)} />
 
               <dl className="crm-detail-list">
                 <div>
@@ -271,49 +344,55 @@ export function OpportunitiesPage() {
                 </div>
               </dl>
 
-              <form className="crm-form crm-compact-form" onSubmit={onStageSubmit}>
-                <h4>Move Stage</h4>
-                <label className="crm-field">
-                  <span className="crm-label">Stage</span>
-                  <select className="crm-input" {...stageForm.register("opportunityStageRefId")}>
-                    <option value="">Select</option>
-                    {(stagesQuery.data ?? []).map((stage) => (
-                      <option key={stage.id} value={stage.id}>
-                        {stage.level2Name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="crm-field">
-                  <span className="crm-label">Probability</span>
-                  <input className="crm-input" {...stageForm.register("probabilityPercent")} />
-                </label>
-                <label className="crm-field">
-                  <span className="crm-label">Remarks</span>
-                  <textarea className="crm-input crm-textarea" {...stageForm.register("remarks")} />
-                </label>
-                <button className="crm-primary-button" disabled={stageMutation.isPending} type="submit">
-                  {stageMutation.isPending ? "Moving..." : "Move Stage"}
-                </button>
-              </form>
+              <div className="crm-action-grid">
+                <form className="crm-form crm-compact-form" onSubmit={onStageSubmit}>
+                  <h4>{nextStageName ? `Move to ${nextStageName}` : "Stage Complete"}</h4>
+                  <p className="crm-muted-text">
+                    Current stage: {selectedOpportunity.opportunityStage.name ?? "-"}
+                    {nextStageName ? `. Next stage: ${nextStageName}.` : ". No further stage is configured."}
+                  </p>
+                  <label className="crm-field">
+                    <span className="crm-label">Stage</span>
+                    <select className="crm-input" {...stageForm.register("opportunityStageRefId")}>
+                      <option value="">Select</option>
+                      {(stagesQuery.data ?? []).map((stage) => (
+                        <option key={stage.id} value={stage.id}>
+                          {stage.level2Name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Probability</span>
+                    <input className="crm-input" {...stageForm.register("probabilityPercent")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Remarks</span>
+                    <textarea className="crm-input crm-textarea" {...stageForm.register("remarks")} />
+                  </label>
+                  <button className="crm-primary-button" disabled={stageMutation.isPending || !nextStageName} type="submit">
+                    {stageMutation.isPending ? "Moving..." : nextStageName ? `Move to ${nextStageName}` : "Stage Complete"}
+                  </button>
+                </form>
 
-              <form className="crm-form crm-compact-form" onSubmit={onNoteSubmit}>
-                <h4>Add Note</h4>
-                <textarea className="crm-input crm-textarea" {...noteForm.register("noteText")} />
-                <button className="crm-secondary-button crm-full-button" disabled={noteMutation.isPending} type="submit">
-                  {noteMutation.isPending ? "Adding..." : "Add Note"}
-                </button>
-              </form>
+                <form className="crm-form crm-compact-form" onSubmit={onNoteSubmit}>
+                  <h4>Add Note</h4>
+                  <textarea className="crm-input crm-textarea" {...noteForm.register("noteText")} />
+                  <button className="crm-secondary-button crm-full-button" disabled={noteMutation.isPending} type="submit">
+                    {noteMutation.isPending ? "Adding..." : "Add Note"}
+                  </button>
+                </form>
 
-              <form className="crm-form crm-compact-form" onSubmit={onSiteVisitSubmit}>
-                <h4>Schedule Visit</h4>
-                <input className="crm-input" type="datetime-local" {...siteVisitForm.register("visitDate")} />
-                <input className="crm-input" placeholder="Proposed unit" {...siteVisitForm.register("proposedUnitCode")} />
-                <textarea className="crm-input crm-textarea" placeholder="Visit remarks" {...siteVisitForm.register("remarks")} />
-                <button className="crm-secondary-button crm-full-button" disabled={siteVisitMutation.isPending} type="submit">
-                  {siteVisitMutation.isPending ? "Scheduling..." : "Schedule Visit"}
-                </button>
-              </form>
+                <form className="crm-form crm-compact-form" onSubmit={onSiteVisitSubmit}>
+                  <h4>Schedule Visit</h4>
+                  <input className="crm-input" type="datetime-local" {...siteVisitForm.register("visitDate")} />
+                  <input className="crm-input" placeholder="Proposed unit" {...siteVisitForm.register("proposedUnitCode")} />
+                  <textarea className="crm-input crm-textarea" placeholder="Visit remarks" {...siteVisitForm.register("remarks")} />
+                  <button className="crm-secondary-button crm-full-button" disabled={siteVisitMutation.isPending} type="submit">
+                    {siteVisitMutation.isPending ? "Scheduling..." : "Schedule Visit"}
+                  </button>
+                </form>
+              </div>
 
               <section className="crm-activity-list">
                 <h4>Notes</h4>
@@ -342,8 +421,7 @@ export function OpportunitiesPage() {
           ) : (
             <p className="crm-muted-text">Select an opportunity to manage stage, notes, and site visits.</p>
           )}
-        </aside>
-      </div>
+      </section>
     </div>
   );
 }

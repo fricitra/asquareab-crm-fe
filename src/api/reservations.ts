@@ -36,6 +36,18 @@ export type Reservation = {
   commercialTermsJson: Record<string, unknown> | null;
   status: string;
   isActive: boolean;
+  createdAt: string | null;
+  createdBy: {
+    id: string | null;
+    name: string | null;
+    role: string | null;
+  };
+  updatedAt: string | null;
+  updatedBy: {
+    id: string | null;
+    name: string | null;
+    role: string | null;
+  };
   remarks: string | null;
 };
 

@@ -27,6 +27,10 @@ export type Opportunity = {
   salesManagerUser: NamedLink;
   lostReason: NamedLink;
   status: string;
+  createdAt: string | null;
+  createdBy: NamedLink;
+  updatedAt: string | null;
+  updatedBy: NamedLink;
   remarks: string | null;
 };
 
@@ -45,6 +49,15 @@ export type OpportunityDetail = Opportunity & {
     proposedUnitCode: string | null;
     assignedToUser: NamedLink;
     status: string;
+    remarks: string | null;
+  }>;
+  stageHistory: Array<{
+    id: string;
+    opportunityStage: NamedLink;
+    probabilityPercent: number | null;
+    changedAt: string | null;
+    changedByUser: NamedLink;
+    changedByRole: string | null;
     remarks: string | null;
   }>;
 };

@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { assignLead, createLead, getLead, listLeads, qualifyLead, type CreateLeadPayload, type Lead, type QualifyLeadPayload } from "../api/leads";
 import { convertLeadToOpportunity } from "../api/opportunities";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
+import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { useAuthStore } from "../store/auth-store";
 
 type LeadFormValues = {
@@ -97,6 +98,146 @@ function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 }
 
+function moneyRange(min: number | null, max: number | null, currency: string | null) {
+  return `${min ?? "-"} - ${max ?? "-"} ${currency ?? ""}`.trim();
+}
+
+function leadWorkflowSteps(lead: Lead): WorkflowStep[] {
+  const isAssigned = Boolean(lead.assignedAt || lead.assignedToUser.id);
+  const isQualified = Boolean(lead.qualifiedAt);
+  const isConverted = Boolean(lead.convertedAt);
+
+  return [
+    {
+      id: "captured",
+      title: "Lead Captured",
+      status: isAssigned || isQualified || isConverted ? "completed" : "current",
+      timestamp: lead.capturedAt,
+      user: lead.capturedByUser.name,
+      role: "CRM User",
+      summary: lead.remarks ?? lead.qualificationNotes,
+      details: [
+        { label: "Lead No", value: lead.leadNo },
+        { label: "Contact", value: lead.contactName },
+        { label: "Mobile", value: lead.mobileNo },
+        { label: "Email", value: lead.email },
+        { label: "Source", value: lead.leadSource.name },
+        { label: "Channel", value: lead.captureChannel.name },
+        { label: "Budget", value: moneyRange(lead.budgetMin, lead.budgetMax, lead.preferredCurrencyCode) },
+        { label: "Project", value: lead.preferredProjectCode },
+        { label: "Unit Type", value: lead.preferredUnitType.name }
+      ]
+    },
+    {
+      id: "assigned",
+      title: "Assigned",
+      status: isConverted || isQualified ? "completed" : isAssigned ? "current" : "next",
+      timestamp: lead.assignedAt,
+      user: lead.assignedByUser.name ?? lead.assignedToUser.name,
+      role: "CRM User",
+      summary: isAssigned ? "Lead is assigned for follow-up." : "Assign the lead to the current user.",
+      details: [
+        { label: "Assigned To", value: lead.assignedToUser.name },
+        { label: "Assigned By", value: lead.assignedByUser.name }
+      ]
+    },
+    {
+      id: "qualified",
+      title: "Qualified",
+      status: isConverted ? "completed" : isQualified ? "current" : isAssigned ? "next" : "next",
+      timestamp: lead.qualifiedAt,
+      user: lead.qualifiedByUser.name,
+      role: "CRM User",
+      summary: lead.qualificationNotes,
+      details: [
+        { label: "Rating", value: lead.leadRating.name },
+        { label: "Buyer Type", value: lead.buyerType.name },
+        { label: "Funding", value: lead.fundingSource.name },
+        { label: "Timeline", value: lead.purchaseTimeline.name },
+        { label: "Score", value: lead.scoreTotal }
+      ]
+    },
+    {
+      id: "converted",
+      title: "Converted",
+      status: isConverted ? "completed" : isQualified ? "current" : "next",
+      timestamp: lead.convertedAt,
+      user: lead.convertedByUser.name,
+      role: "CRM User",
+      summary: isConverted ? "Lead has been converted to an opportunity." : "Convert the qualified lead into an opportunity.",
+      details: [
+        { label: "Customer", value: lead.customer.name },
+        { label: "Lead Status", value: lead.leadStatus.name }
+      ]
+    },
+    {
+      id: "opportunity",
+      title: "Opportunity",
+      status: isConverted ? "current" : "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: isConverted ? "Continue this customer journey in Opportunities." : "This becomes available after conversion.",
+      details: [
+        { label: "Next Screen", value: "/opportunities" },
+        { label: "Next Data", value: "Stage, probability, notes, and site visits" }
+      ]
+    },
+    {
+      id: "site-visit",
+      title: "Site Visit",
+      status: "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: "Schedule and complete the customer visit from Opportunity Detail.",
+      details: [
+        { label: "Required Before", value: "Opportunity" },
+        { label: "Next Data", value: "Visit date, proposed unit, remarks" }
+      ]
+    },
+    {
+      id: "negotiation",
+      title: "Negotiation",
+      status: "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: "Move the opportunity stage when commercial discussion starts.",
+      details: [
+        { label: "Required Before", value: "Site Visit" },
+        { label: "Next Data", value: "Probability and remarks" }
+      ]
+    },
+    {
+      id: "reservation-ready",
+      title: "Reservation Ready",
+      status: "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: "Move the opportunity to reservation-ready before selecting a unit.",
+      details: [
+        { label: "Required Before", value: "Proposal or negotiation" },
+        { label: "Next Screen", value: "/reservations" }
+      ]
+    },
+    {
+      id: "reserved",
+      title: "Reserved",
+      status: "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: "Create the reservation from the Reservations screen using this opportunity and an available unit.",
+      details: [
+        { label: "Required Data", value: "Opportunity, available unit, amount, expiry" },
+        { label: "Inventory Result", value: "Unit becomes Reserved" }
+      ]
+    }
+  ];
+}
+
 function SelectField<TFormValues extends FieldValues>({
   label,
   name,
@@ -129,7 +270,7 @@ export function LeadsPage() {
   const user = useAuthStore((state) => state.user);
   const [search, setSearch] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [isCreateOpen, setIsCreateOpen] = useState(true);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const leadSourcesQuery = useQuery({ queryKey: ["reference", "LEAD", "SOURCE"], queryFn: () => getReferenceFamily("LEAD", "SOURCE") });
@@ -283,7 +424,7 @@ export function LeadsPage() {
           <h2>Lead Inbox</h2>
         </div>
         <button className="crm-primary-button crm-fit-button" onClick={() => setIsCreateOpen((value) => !value)} type="button">
-          {isCreateOpen ? "Hide Form" : "New Lead"}
+          {isCreateOpen ? "Close Form" : "Create Lead"}
         </button>
       </section>
 
@@ -308,64 +449,63 @@ export function LeadsPage() {
 
       {errorMessage ? <div className="crm-error-banner">{errorMessage}</div> : null}
 
-      <div className="crm-lead-layout">
-        <section className="crm-panel">
-          <div className="crm-panel-header">
-            <h3>Inbox</h3>
-            <input
-              className="crm-input crm-search-input"
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search lead, contact, phone, email"
-              value={search}
-            />
-          </div>
+      <section className="crm-panel">
+        <div className="crm-panel-header">
+          <h3>Inbox</h3>
+          <input
+            className="crm-input crm-search-input"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search lead, contact, phone, email"
+            value={search}
+          />
+        </div>
 
-          <div className="crm-table-wrap">
-            <table className="crm-table">
-              <thead>
-                <tr>
-                  <th>Lead</th>
-                  <th>Contact</th>
-                  <th>Status</th>
-                  <th>Rating</th>
-                  <th>Score</th>
-                  <th>Captured</th>
+        <div className="crm-table-wrap">
+          <table className="crm-table">
+            <thead>
+              <tr>
+                <th>Lead</th>
+                <th>Contact</th>
+                <th>Status</th>
+                <th>Rating</th>
+                <th>Score</th>
+                <th>Captured</th>
+              </tr>
+            </thead>
+            <tbody>
+              {leadRows.map((lead: Lead) => (
+                <tr
+                  className={selectedLeadId === lead.id ? "is-selected" : ""}
+                  key={lead.id}
+                  onClick={() => setSelectedLeadId(lead.id)}
+                >
+                  <td>
+                    <strong>{lead.leadNo}</strong>
+                    <span>{lead.leadSource.name ?? "No source"}</span>
+                  </td>
+                  <td>
+                    <strong>{lead.contactName ?? "Unnamed lead"}</strong>
+                    <span>{lead.mobileNo ?? lead.email ?? "-"}</span>
+                  </td>
+                  <td>{lead.leadStatus.name ?? "-"}</td>
+                  <td>{lead.leadRating.name ?? "-"}</td>
+                  <td>{lead.scoreTotal ?? "-"}</td>
+                  <td>{formatDate(lead.capturedAt)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {leadRows.map((lead: Lead) => (
-                  <tr
-                    className={selectedLeadId === lead.id ? "is-selected" : ""}
-                    key={lead.id}
-                    onClick={() => setSelectedLeadId(lead.id)}
-                  >
-                    <td>
-                      <strong>{lead.leadNo}</strong>
-                      <span>{lead.leadSource.name ?? "No source"}</span>
-                    </td>
-                    <td>
-                      <strong>{lead.contactName ?? "Unnamed lead"}</strong>
-                      <span>{lead.mobileNo ?? lead.email ?? "-"}</span>
-                    </td>
-                    <td>{lead.leadStatus.name ?? "-"}</td>
-                    <td>{lead.leadRating.name ?? "-"}</td>
-                    <td>{lead.scoreTotal ?? "-"}</td>
-                    <td>{formatDate(lead.capturedAt)}</td>
-                  </tr>
-                ))}
-                {leadRows.length === 0 ? (
-                  <tr>
-                    <td className="crm-empty-cell" colSpan={6}>
-                      No leads found.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              ))}
+              {leadRows.length === 0 ? (
+                <tr>
+                  <td className="crm-empty-cell" colSpan={6}>
+                    No leads found.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-        <aside className="crm-panel crm-detail-panel">
+      <section className="crm-panel crm-lead-detail-wide">
           <h3>Lead Detail</h3>
           {selectedLead ? (
             <>
@@ -376,6 +516,7 @@ export function LeadsPage() {
                 </div>
                 <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
               </div>
+              <WorkflowTracker steps={leadWorkflowSteps(selectedLead)} />
               <dl className="crm-detail-list">
                 <div>
                   <dt>Phone</dt>
@@ -407,11 +548,11 @@ export function LeadsPage() {
 
               <button
                 className="crm-secondary-button crm-full-button"
-                disabled={assignMutation.isPending || !user?.id}
+                disabled={assignMutation.isPending || !user?.id || Boolean(selectedLead.assignedToUser.id)}
                 onClick={() => assignMutation.mutate(selectedLead.id)}
                 type="button"
               >
-                {assignMutation.isPending ? "Assigning..." : "Assign to me"}
+                {selectedLead.assignedToUser.id ? "Assigned" : assignMutation.isPending ? "Assigning..." : "Assign to me"}
               </button>
 
               <button
@@ -423,40 +564,54 @@ export function LeadsPage() {
                 {selectedLead.convertedAt ? "Converted" : convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
               </button>
 
-              <form className="crm-form crm-compact-form" onSubmit={onQualify}>
-                <h4>Qualify</h4>
-                <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
-                <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
-                <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
-                <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
-                <div className="crm-two-col">
-                  <label className="crm-field">
-                    <span className="crm-label">Budget Min</span>
-                    <input className="crm-input" {...qualifyForm.register("budgetMin")} />
-                  </label>
-                  <label className="crm-field">
-                    <span className="crm-label">Budget Max</span>
-                    <input className="crm-input" {...qualifyForm.register("budgetMax")} />
-                  </label>
-                </div>
-                <label className="crm-field">
-                  <span className="crm-label">Score</span>
-                  <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
-                </label>
-                <label className="crm-field">
-                  <span className="crm-label">Notes</span>
-                  <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
-                </label>
-                <button className="crm-primary-button" disabled={qualifyMutation.isPending} type="submit">
-                  {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
+              {selectedLead.convertedAt ? (
+                <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
+                  Continue in Opportunities
                 </button>
-              </form>
+              ) : null}
+
+              {selectedLead.qualifiedAt ? (
+                <section className="crm-activity-list">
+                  <h4>Qualification Completed</h4>
+                  <p className="crm-muted-text">
+                    Qualified by {selectedLead.qualifiedByUser.name ?? "CRM user"} on {formatDate(selectedLead.qualifiedAt)}.
+                  </p>
+                </section>
+              ) : (
+                <form className="crm-form crm-compact-form" onSubmit={onQualify}>
+                  <h4>Qualify</h4>
+                  <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
+                  <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
+                  <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
+                  <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
+                  <div className="crm-two-col">
+                    <label className="crm-field">
+                      <span className="crm-label">Budget Min</span>
+                      <input className="crm-input" {...qualifyForm.register("budgetMin")} />
+                    </label>
+                    <label className="crm-field">
+                      <span className="crm-label">Budget Max</span>
+                      <input className="crm-input" {...qualifyForm.register("budgetMax")} />
+                    </label>
+                  </div>
+                  <label className="crm-field">
+                    <span className="crm-label">Score</span>
+                    <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Notes</span>
+                    <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
+                  </label>
+                  <button className="crm-primary-button" disabled={qualifyMutation.isPending} type="submit">
+                    {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
+                  </button>
+                </form>
+              )}
             </>
           ) : (
             <p className="crm-muted-text">Select a lead to view details and qualification actions.</p>
           )}
-        </aside>
-      </div>
+      </section>
 
       {isCreateOpen ? (
         <section className="crm-panel">

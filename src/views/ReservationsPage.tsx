@@ -10,6 +10,7 @@ import {
   listReservations,
   type Reservation
 } from "../api/reservations";
+import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type ReservationFormValues = {
   opportunityId: string;
@@ -35,6 +36,56 @@ function formatDate(value: string | null) {
 function money(value: number | null, currencyCode: string | null) {
   if (value === null) return "-";
   return `${value.toLocaleString()} ${currencyCode ?? ""}`.trim();
+}
+
+function reservationWorkflowSteps(reservation: Reservation): WorkflowStep[] {
+  const isCancelled = reservation.reservationStatus.code === "CANCELLED";
+  return [
+    {
+      id: "requested",
+      title: "Requested",
+      status: isCancelled ? "completed" : "current",
+      timestamp: reservation.createdAt,
+      user: reservation.createdBy.name,
+      role: reservation.createdBy.role,
+      summary: reservation.remarks ?? "Reservation was created for the selected opportunity and unit.",
+      details: [
+        { label: "Reservation No", value: reservation.reservationNo },
+        { label: "Customer", value: reservation.customer.name },
+        { label: "Opportunity", value: reservation.opportunity.opportunityNo },
+        { label: "Project", value: reservation.project.projectCode },
+        { label: "Unit", value: reservation.unit.unitCode },
+        { label: "Amount", value: money(reservation.reservationAmount, reservation.currencyCode) },
+        { label: "Expiry", value: reservation.expiryDate }
+      ]
+    },
+    {
+      id: "approved",
+      title: "Approved",
+      status: isCancelled ? "blocked" : "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: "Approval workflow is planned for a later package.",
+      details: [
+        { label: "Current Status", value: reservation.reservationStatus.name },
+        { label: "Active", value: reservation.isActive ? "Yes" : "No" }
+      ]
+    },
+    {
+      id: "cancelled",
+      title: "Cancelled",
+      status: isCancelled ? "current" : "next",
+      timestamp: isCancelled ? reservation.updatedAt : null,
+      user: isCancelled ? reservation.updatedBy.name : null,
+      role: isCancelled ? reservation.updatedBy.role : null,
+      summary: isCancelled ? reservation.remarks : "Use this action only when reservation should be released.",
+      details: [
+        { label: "Status", value: reservation.reservationStatus.name },
+        { label: "Unit Released", value: isCancelled ? "Yes" : "No" }
+      ]
+    }
+  ];
 }
 
 export function ReservationsPage() {
@@ -279,6 +330,7 @@ export function ReservationsPage() {
                   {selectedReservation.reservationStatus.name ?? selectedReservation.status}
                 </span>
               </div>
+              <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation)} />
 
               <dl className="crm-detail-list">
                 <div>

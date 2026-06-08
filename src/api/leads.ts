@@ -31,11 +31,14 @@ export type Lead = {
   purchaseTimeline: NamedLink;
   qualificationNotes: string | null;
   qualifiedAt: string | null;
+  qualifiedByUser: NamedLink;
   convertedAt: string | null;
+  convertedByUser: NamedLink;
   assignedToUser: NamedLink;
   assignedByUser: NamedLink;
   assignedAt: string | null;
   capturedAt: string | null;
+  capturedByUser: NamedLink;
   scoreTotal: number | null;
   scoreEngagement: number | null;
   scoreBehavior: number | null;

@@ -377,6 +377,35 @@ textarea {
   top: 24px;
 }
 
+.crm-lead-detail-wide {
+  min-height: 360px;
+}
+
+.crm-lead-detail-wide .crm-detail-list {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.crm-lead-detail-wide .crm-full-button {
+  width: auto;
+  min-width: 180px;
+  margin: 0 12px 18px 0;
+}
+
+.crm-lead-detail-wide .crm-compact-form {
+  max-width: 760px;
+}
+
+.crm-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.crm-action-grid .crm-compact-form {
+  max-width: none;
+}
+
 .crm-detail-title {
   display: flex;
   align-items: flex-start;
@@ -479,6 +508,124 @@ textarea {
   color: #16304a;
 }
 
+.crm-workflow {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 22px;
+  padding: 14px;
+  border: 1px solid #dce6ef;
+  border-radius: 14px;
+  background: #f8fbfe;
+}
+
+.crm-workflow-header,
+.crm-workflow-detail-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.crm-workflow-header h4 {
+  margin: 0;
+}
+
+.crm-workflow-header span,
+.crm-workflow-detail-title span {
+  color: #5f758b;
+  font-size: 0.9rem;
+}
+
+.crm-workflow-steps {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.crm-workflow-step {
+  flex: 0 0 136px;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid #c5d3e2;
+  border-radius: 12px;
+  background: #fff;
+  color: #16304a;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crm-workflow-step strong,
+.crm-workflow-step span {
+  display: block;
+}
+
+.crm-workflow-step span {
+  margin-top: 6px;
+  color: #5f758b;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.crm-workflow-step.is-completed {
+  border-color: #9bd6b9;
+  background: #edf8f2;
+  color: #145f39;
+}
+
+.crm-workflow-step.is-current {
+  border-color: #7db6e8;
+  background: #eef7ff;
+  color: #184b78;
+}
+
+.crm-workflow-step.is-active {
+  border-color: #193a5b;
+  box-shadow: inset 0 0 0 1px #193a5b;
+}
+
+.crm-workflow-step.is-next {
+  border-color: #d7e0ea;
+  background: #f6f8fa;
+  color: #63778b;
+}
+
+.crm-workflow-step.is-blocked {
+  border-color: #f2c6bf;
+  background: #fff4f2;
+}
+
+.crm-workflow-detail {
+  padding-top: 12px;
+  border-top: 1px solid #dce6ef;
+}
+
+.crm-workflow-detail p {
+  margin: 8px 0 12px;
+  color: #536b82;
+  line-height: 1.5;
+}
+
+.crm-workflow-data {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0;
+}
+
+.crm-workflow-data dt {
+  color: #5f758b;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.crm-workflow-data dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
 .crm-two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -532,12 +679,26 @@ textarea {
   .crm-lead-form,
   .crm-reservation-form,
   .crm-detail-list,
+  .crm-workflow-data,
   .crm-two-col {
     grid-template-columns: 1fr;
   }
 
   .crm-detail-panel {
     position: static;
+  }
+
+  .crm-lead-detail-wide .crm-detail-list {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-lead-detail-wide .crm-full-button {
+    width: 100%;
+    margin-right: 0;
+  }
+
+  .crm-action-grid {
+    grid-template-columns: 1fr;
   }
 
   .crm-form-wide {
