@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router-dom";
 import { AppShell } from "../shared/AppShell";
 import { ProtectedRoute } from "../shared/ProtectedRoute";
+import { ContractsPage } from "../views/ContractsPage";
 import { DashboardPage } from "../views/DashboardPage";
 import { InventoryPage } from "../views/InventoryPage";
 import { LeadsPage } from "../views/LeadsPage";
@@ -38,6 +39,10 @@ export const router = createBrowserRouter([
           {
             path: "/reservations",
             element: <ReservationsPage />
+          },
+          {
+            path: "/contracts",
+            element: <ContractsPage />
           }
         ]
       }

@@ -19,6 +19,16 @@ export type Project = {
   remarks: string | null;
 };
 
+export type CreateProjectPayload = {
+  projectCode: string;
+  name: string;
+  description?: string;
+  locationCode?: string;
+  legalEntityCode?: string;
+  currencyCode?: string;
+  remarks?: string;
+};
+
 export type Unit = {
   id: string;
   project: {
@@ -49,6 +59,22 @@ export type Unit = {
   remarks: string | null;
 };
 
+export type CreateUnitPayload = {
+  projectId: string;
+  unitCode: string;
+  unitName?: string;
+  blockCode?: string;
+  floorNo?: string;
+  unitTypeRefId?: string;
+  bedroomCount?: number;
+  grossArea?: number;
+  netArea?: number;
+  basePrice?: number;
+  currencyCode?: string;
+  availabilityStatusRefId?: string;
+  remarks?: string;
+};
+
 export async function listProjects(search?: string) {
   const response = await apiClient.get<{
     items: Project[];
@@ -71,5 +97,30 @@ export async function listUnits(search?: string) {
 
 export async function getUnit(id: string) {
   const response = await apiClient.get<Unit>(`/inventory/units/${id}`);
+  return response.data;
+}
+
+export async function getProject(id: string) {
+  const response = await apiClient.get<Project>(`/inventory/projects/${id}`);
+  return response.data;
+}
+
+export async function createProject(payload: CreateProjectPayload) {
+  const response = await apiClient.post<Project>("/inventory/projects", payload);
+  return response.data;
+}
+
+export async function updateProject(id: string, payload: Partial<CreateProjectPayload>) {
+  const response = await apiClient.patch<Project>(`/inventory/projects/${id}`, payload);
+  return response.data;
+}
+
+export async function createUnit(payload: CreateUnitPayload) {
+  const response = await apiClient.post<Unit>("/inventory/units", payload);
+  return response.data;
+}
+
+export async function updateUnit(id: string, payload: Partial<CreateUnitPayload>) {
+  const response = await apiClient.patch<Unit>(`/inventory/units/${id}`, payload);
   return response.data;
 }

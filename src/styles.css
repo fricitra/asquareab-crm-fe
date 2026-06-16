@@ -6,6 +6,12 @@
     linear-gradient(135deg, #f8f4eb 0%, #eef4fb 100%);
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -13,6 +19,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 a {
@@ -28,7 +35,9 @@ textarea {
 }
 
 .crm-page {
+  height: 100vh;
   min-height: 100vh;
+  overflow-y: auto;
   padding: 32px;
 }
 
@@ -79,7 +88,7 @@ textarea {
 .crm-toggle-button,
 .crm-primary-button,
 .crm-secondary-button {
-  border-radius: 18px;
+  border-radius: 12px;
   border: 1px solid #c5d3e2;
   cursor: pointer;
   transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
@@ -129,7 +138,7 @@ textarea {
 .crm-input {
   width: 100%;
   padding: 18px 20px;
-  border-radius: 18px;
+  border-radius: 12px;
   border: 1px solid #c5d3e2;
   background: #fff;
 }
@@ -161,22 +170,25 @@ textarea {
 
 .crm-error-banner {
   padding: 16px 18px;
-  border-radius: 18px;
+  border-radius: 10px;
   border: 1px solid #f2b0a7;
   background: #fff1ef;
   color: #c24532;
 }
 
 .crm-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 280px 1fr;
+  overflow: hidden;
 }
 
 .crm-sidebar {
   padding: 32px 24px;
   background: #173450;
   color: white;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .crm-sidebar-title {
@@ -197,7 +209,7 @@ textarea {
 
 .crm-nav-link {
   padding: 14px 16px;
-  border-radius: 16px;
+  border-radius: 10px;
   color: rgba(255, 255, 255, 0.9);
   background: rgba(255, 255, 255, 0.06);
 }
@@ -210,6 +222,24 @@ textarea {
 
 .crm-content {
   padding: 32px;
+  min-width: 0;
+  height: 100vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.crm-content::-webkit-scrollbar {
+  width: 12px;
+}
+
+.crm-content::-webkit-scrollbar-track {
+  background: rgba(226, 234, 242, 0.6);
+}
+
+.crm-content::-webkit-scrollbar-thumb {
+  background: #9fb2c5;
+  border: 3px solid rgba(226, 234, 242, 0.6);
+  border-radius: 999px;
 }
 
 .crm-topbar {
@@ -249,7 +279,7 @@ textarea {
 
 .crm-card {
   padding: 22px;
-  border-radius: 24px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(196, 210, 224, 0.8);
   box-shadow: 0 14px 34px rgba(22, 48, 74, 0.08);
@@ -313,7 +343,7 @@ textarea {
 
 .crm-panel {
   padding: 22px;
-  border-radius: 18px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(196, 210, 224, 0.8);
   box-shadow: 0 14px 34px rgba(22, 48, 74, 0.08);
@@ -322,7 +352,7 @@ textarea {
 .crm-search-input {
   max-width: 360px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: 10px;
 }
 
 .crm-table-wrap {
@@ -395,6 +425,33 @@ textarea {
   max-width: 760px;
 }
 
+.crm-next-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
+  gap: 16px;
+  margin: 0 0 18px;
+  padding: 16px;
+  border: 1px solid #b9d5ee;
+  border-radius: 8px;
+  background: #eef7ff;
+}
+
+.crm-next-action strong,
+.crm-next-action p {
+  display: block;
+  margin: 4px 0 0;
+}
+
+.crm-next-action p,
+.crm-action-note {
+  color: #536b82;
+  line-height: 1.5;
+}
+
+.crm-action-note {
+  margin: -6px 0 18px;
+}
+
 .crm-action-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -404,6 +461,38 @@ textarea {
 
 .crm-action-grid .crm-compact-form {
   max-width: none;
+}
+
+.crm-inventory-grid {
+  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
+}
+
+.crm-tabs {
+  display: inline-flex;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.crm-tab-button {
+  min-width: 116px;
+  padding: 11px 15px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #536b82;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.crm-tab-button.is-active {
+  background: #193a5b;
+  color: #fff;
 }
 
 .crm-detail-title {
@@ -514,7 +603,7 @@ textarea {
   margin: 18px 0 22px;
   padding: 14px;
   border: 1px solid #dce6ef;
-  border-radius: 14px;
+  border-radius: 8px;
   background: #f8fbfe;
 }
 
@@ -548,7 +637,7 @@ textarea {
   min-height: 72px;
   padding: 10px;
   border: 1px solid #c5d3e2;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
   color: #16304a;
   text-align: left;
@@ -652,12 +741,26 @@ textarea {
 }
 
 @media (max-width: 960px) {
+  body {
+    overflow: auto;
+  }
+
   .crm-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
   }
 
   .crm-sidebar {
+    height: auto;
+    overflow: visible;
     padding-bottom: 20px;
+  }
+
+  .crm-content {
+    height: auto;
+    overflow: visible;
   }
 
   .crm-content,
@@ -679,6 +782,7 @@ textarea {
   .crm-lead-form,
   .crm-reservation-form,
   .crm-detail-list,
+  .crm-next-action,
   .crm-workflow-data,
   .crm-two-col {
     grid-template-columns: 1fr;
@@ -699,6 +803,15 @@ textarea {
 
   .crm-action-grid {
     grid-template-columns: 1fr;
+  }
+
+  .crm-tabs {
+    display: grid;
+    width: 100%;
+  }
+
+  .crm-tab-button {
+    width: 100%;
   }
 
   .crm-form-wide {

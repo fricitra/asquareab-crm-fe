@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 type AuthUser = {
   id: string;
@@ -15,20 +16,27 @@ type AuthState = {
   clearSession: () => void;
 };
 
-export const useAuthStore = create<AuthState>((set) => ({
-  accessToken: null,
-  refreshToken: null,
-  user: null,
-  setSession: (session) =>
-    set({
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
-      user: session.user
-    }),
-  clearSession: () =>
-    set({
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
       accessToken: null,
       refreshToken: null,
-      user: null
-    })
-}));
+      user: null,
+      setSession: (session) =>
+        set({
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          user: session.user
+        }),
+      clearSession: () =>
+        set({
+          accessToken: null,
+          refreshToken: null,
+          user: null
+        })
+    }),
+    {
+      name: "asquare-crm-auth"
+    }
+  )
+);

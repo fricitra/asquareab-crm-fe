@@ -46,7 +46,8 @@ type QualifyFormValues = {
 };
 
 function pickNumber(value: string) {
-  return value.trim() === "" ? undefined : Number(value);
+  const normalized = value.replace(/[% ,]/g, "").trim();
+  return normalized === "" ? undefined : Number(normalized);
 }
 
 function pickString(value: string) {
@@ -100,6 +101,38 @@ function formatDate(value: string | null) {
 
 function moneyRange(min: number | null, max: number | null, currency: string | null) {
   return `${min ?? "-"} - ${max ?? "-"} ${currency ?? ""}`.trim();
+}
+
+function leadNextAction(lead: Lead) {
+  if (!lead.assignedAt && !lead.assignedToUser.id) {
+    return {
+      title: "Assign lead",
+      summary: "Assign this lead to yourself before qualification so ownership and audit history are clear.",
+      dataNeeded: "No extra data required."
+    };
+  }
+
+  if (!lead.qualifiedAt) {
+    return {
+      title: "Qualify lead",
+      summary: "Capture buyer type, funding, budget, timeline, score, and qualification notes.",
+      dataNeeded: "Rating, buyer type, funding, timeline, budget, score, and notes."
+    };
+  }
+
+  if (!lead.convertedAt) {
+    return {
+      title: "Convert to opportunity",
+      summary: "Create the opportunity once the buyer details are qualified.",
+      dataNeeded: "No extra data required. Conversion creates the opportunity record."
+    };
+  }
+
+  return {
+    title: "Continue in Opportunities",
+    summary: "Lead work is complete. Continue the customer journey in the Opportunity module.",
+    dataNeeded: "Stage, probability, notes, and site visits."
+  };
 }
 
 function leadWorkflowSteps(lead: Lead): WorkflowStep[] {
@@ -340,6 +373,8 @@ export function LeadsPage() {
       setErrorMessage(null);
       setSelectedLeadId(lead.id);
       createForm.reset();
+      setIsCreateOpen(false);
+      queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
     },
     onError: () => setErrorMessage("Lead could not be created. Check required contact fields and reference values.")
@@ -350,6 +385,7 @@ export function LeadsPage() {
     onSuccess: (lead) => {
       setErrorMessage(null);
       setSelectedLeadId(lead.id);
+      queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
     },
@@ -367,6 +403,7 @@ export function LeadsPage() {
     onSuccess: (lead) => {
       setErrorMessage(null);
       setSelectedLeadId(lead.id);
+      queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
     },
@@ -392,6 +429,7 @@ export function LeadsPage() {
   });
 
   const selectedLead = leadDetailQuery.data;
+  const selectedLeadNextAction = selectedLead ? leadNextAction(selectedLead) : null;
 
   const stats = useMemo(() => {
     const leads = leadsQuery.data?.items ?? [];
@@ -407,7 +445,8 @@ export function LeadsPage() {
 
   const onCreate = createForm.handleSubmit((values) => createMutation.mutate(toCreatePayload(values)));
   const onQualify = qualifyForm.handleSubmit((values) => {
-    if (!selectedLeadId) {
+    if (!selectedLeadId || !selectedLead?.assignedToUser.id) {
+      setErrorMessage("Assign the lead before completing qualification.");
       return;
     }
 
@@ -546,8 +585,22 @@ export function LeadsPage() {
                 </div>
               </dl>
 
+              {selectedLeadNextAction ? (
+                <section className="crm-next-action">
+                  <div>
+                    <span className="crm-label">Next Action</span>
+                    <strong>{selectedLeadNextAction.title}</strong>
+                    <p>{selectedLeadNextAction.summary}</p>
+                  </div>
+                  <div>
+                    <span className="crm-label">Data Needed</span>
+                    <p>{selectedLeadNextAction.dataNeeded}</p>
+                  </div>
+                </section>
+              ) : null}
+
               <button
-                className="crm-secondary-button crm-full-button"
+                className={`crm-full-button ${!selectedLead.assignedToUser.id ? "crm-primary-button" : "crm-secondary-button"}`}
                 disabled={assignMutation.isPending || !user?.id || Boolean(selectedLead.assignedToUser.id)}
                 onClick={() => assignMutation.mutate(selectedLead.id)}
                 type="button"
@@ -556,13 +609,16 @@ export function LeadsPage() {
               </button>
 
               <button
-                className="crm-secondary-button crm-full-button"
+                className={`crm-full-button ${selectedLead.qualifiedAt && !selectedLead.convertedAt ? "crm-primary-button" : "crm-secondary-button"}`}
                 disabled={convertMutation.isPending || !selectedLead.qualifiedAt || Boolean(selectedLead.convertedAt)}
                 onClick={() => convertMutation.mutate(selectedLead.id)}
                 type="button"
               >
                 {selectedLead.convertedAt ? "Converted" : convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
               </button>
+              {!selectedLead.qualifiedAt ? (
+                <p className="crm-action-note">Convert is available after this lead is qualified.</p>
+              ) : null}
 
               {selectedLead.convertedAt ? (
                 <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
@@ -580,6 +636,9 @@ export function LeadsPage() {
               ) : (
                 <form className="crm-form crm-compact-form" onSubmit={onQualify}>
                   <h4>Qualify</h4>
+                  {!selectedLead.assignedToUser.id ? (
+                    <p className="crm-action-note">Assign the lead first, then qualification can be completed.</p>
+                  ) : null}
                   <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
                   <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
                   <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
@@ -602,7 +661,7 @@ export function LeadsPage() {
                     <span className="crm-label">Notes</span>
                     <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
                   </label>
-                  <button className="crm-primary-button" disabled={qualifyMutation.isPending} type="submit">
+                  <button className="crm-primary-button" disabled={qualifyMutation.isPending || !selectedLead.assignedToUser.id} type="submit">
                     {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
                   </button>
                 </form>

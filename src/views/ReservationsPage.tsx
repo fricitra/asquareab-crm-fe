@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { listUnits } from "../api/inventory";
 import { listOpportunities } from "../api/opportunities";
 import {
+  approveReservation,
   cancelReservation,
   createReservation,
   getReservation,
@@ -40,11 +41,12 @@ function money(value: number | null, currencyCode: string | null) {
 
 function reservationWorkflowSteps(reservation: Reservation): WorkflowStep[] {
   const isCancelled = reservation.reservationStatus.code === "CANCELLED";
+  const isApproved = reservation.reservationStatus.code === "APPROVED";
   return [
     {
       id: "requested",
       title: "Requested",
-      status: isCancelled ? "completed" : "current",
+      status: isCancelled || isApproved ? "completed" : "current",
       timestamp: reservation.createdAt,
       user: reservation.createdBy.name,
       role: reservation.createdBy.role,
@@ -62,11 +64,11 @@ function reservationWorkflowSteps(reservation: Reservation): WorkflowStep[] {
     {
       id: "approved",
       title: "Approved",
-      status: isCancelled ? "blocked" : "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Approval workflow is planned for a later package.",
+      status: isCancelled ? "blocked" : isApproved ? "current" : "next",
+      timestamp: isApproved ? reservation.updatedAt : null,
+      user: isApproved ? reservation.updatedBy.name : null,
+      role: isApproved ? reservation.updatedBy.role : null,
+      summary: isApproved ? reservation.remarks ?? "Reservation has been approved." : "Approve the reservation after verifying buyer and unit details.",
       details: [
         { label: "Current Status", value: reservation.reservationStatus.name },
         { label: "Active", value: reservation.isActive ? "Yes" : "No" }
@@ -158,6 +160,17 @@ export function ReservationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
     },
     onError: () => setMessage("Reservation could not be cancelled.")
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (reservationId: string) => approveReservation(reservationId, "Reservation approved from CRM workspace"),
+    onSuccess: (reservation) => {
+      setMessage("Reservation approved.");
+      void queryClient.invalidateQueries({ queryKey: ["reservations"] });
+      void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
+      void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
+    },
+    onError: () => setMessage("Reservation could not be approved.")
   });
 
   const reservationRows = reservationsQuery.data?.items ?? [];
@@ -259,125 +272,141 @@ export function ReservationsPage() {
         </form>
       </section>
 
-      <div className="crm-lead-layout">
-        <section className="crm-panel">
-          <div className="crm-panel-header">
-            <h3>Reservation Register</h3>
-            <input
-              className="crm-input crm-search-input"
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search reservation, customer, unit"
-              value={search}
-            />
-          </div>
+      <section className="crm-panel">
+        <div className="crm-panel-header">
+          <h3>Reservation Register</h3>
+          <input
+            className="crm-input crm-search-input"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search reservation, customer, unit"
+            value={search}
+          />
+        </div>
 
-          <div className="crm-table-wrap">
-            <table className="crm-table">
-              <thead>
-                <tr>
-                  <th>Reservation</th>
-                  <th>Customer</th>
-                  <th>Unit</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                  <th>Amount</th>
+        <div className="crm-table-wrap">
+          <table className="crm-table">
+            <thead>
+              <tr>
+                <th>Reservation</th>
+                <th>Customer</th>
+                <th>Unit</th>
+                <th>Status</th>
+                <th>Date</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reservationRows.map((reservation: Reservation) => (
+                <tr
+                  className={selectedReservationId === reservation.id ? "is-selected" : ""}
+                  key={reservation.id}
+                  onClick={() => setSelectedReservationId(reservation.id)}
+                >
+                  <td>
+                    <strong>{reservation.reservationNo}</strong>
+                    <span>{reservation.opportunity.opportunityNo ?? "-"}</span>
+                  </td>
+                  <td>{reservation.customer.name ?? "-"}</td>
+                  <td>{reservation.unit.unitCode ?? "-"}</td>
+                  <td>
+                    <span className={`crm-status-pill crm-status-${reservation.reservationStatus.code?.toLowerCase() ?? "default"}`}>
+                      {reservation.reservationStatus.name ?? reservation.status}
+                    </span>
+                  </td>
+                  <td>{formatDate(reservation.reservationDate)}</td>
+                  <td>{money(reservation.reservationAmount, reservation.currencyCode)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {reservationRows.map((reservation: Reservation) => (
-                  <tr
-                    className={selectedReservationId === reservation.id ? "is-selected" : ""}
-                    key={reservation.id}
-                    onClick={() => setSelectedReservationId(reservation.id)}
-                  >
-                    <td>
-                      <strong>{reservation.reservationNo}</strong>
-                      <span>{reservation.opportunity.opportunityNo ?? "-"}</span>
-                    </td>
-                    <td>{reservation.customer.name ?? "-"}</td>
-                    <td>{reservation.unit.unitCode ?? "-"}</td>
-                    <td>
-                      <span className={`crm-status-pill crm-status-${reservation.reservationStatus.code?.toLowerCase() ?? "default"}`}>
-                        {reservation.reservationStatus.name ?? reservation.status}
-                      </span>
-                    </td>
-                    <td>{formatDate(reservation.reservationDate)}</td>
-                    <td>{money(reservation.reservationAmount, reservation.currencyCode)}</td>
-                  </tr>
-                ))}
-                {reservationRows.length === 0 ? (
-                  <tr>
-                    <td className="crm-empty-cell" colSpan={6}>
-                      No reservations found.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              ))}
+              {reservationRows.length === 0 ? (
+                <tr>
+                  <td className="crm-empty-cell" colSpan={6}>
+                    No reservations found.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-        <aside className="crm-panel crm-detail-panel">
-          <h3>Reservation Detail</h3>
-          {selectedReservation ? (
-            <>
-              <div className="crm-detail-title">
-                <div>
-                  <strong>{selectedReservation.reservationNo}</strong>
-                  <span>{selectedReservation.customer.name ?? "Customer"}</span>
-                </div>
-                <span className={`crm-status-pill crm-status-${selectedReservation.reservationStatus.code?.toLowerCase() ?? "default"}`}>
-                  {selectedReservation.reservationStatus.name ?? selectedReservation.status}
-                </span>
+      <section className="crm-panel crm-lead-detail-wide">
+        <h3>Reservation Detail</h3>
+        {selectedReservation ? (
+          <>
+            <div className="crm-detail-title">
+              <div>
+                <strong>{selectedReservation.reservationNo}</strong>
+                <span>{selectedReservation.customer.name ?? "Customer"}</span>
               </div>
-              <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation)} />
+              <span className={`crm-status-pill crm-status-${selectedReservation.reservationStatus.code?.toLowerCase() ?? "default"}`}>
+                {selectedReservation.reservationStatus.name ?? selectedReservation.status}
+              </span>
+            </div>
+            <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation)} />
 
-              <dl className="crm-detail-list">
-                <div>
-                  <dt>Opportunity</dt>
-                  <dd>{selectedReservation.opportunity.opportunityNo ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Unit</dt>
-                  <dd>{selectedReservation.unit.unitCode ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Project</dt>
-                  <dd>{selectedReservation.project.projectCode ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Amount</dt>
-                  <dd>{money(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
-                </div>
-                <div>
-                  <dt>Date</dt>
-                  <dd>{formatDate(selectedReservation.reservationDate)}</dd>
-                </div>
-                <div>
-                  <dt>Expiry</dt>
-                  <dd>{formatDate(selectedReservation.expiryDate)}</dd>
-                </div>
-              </dl>
+            <dl className="crm-detail-list">
+              <div>
+                <dt>Opportunity</dt>
+                <dd>{selectedReservation.opportunity.opportunityNo ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Unit</dt>
+                <dd>{selectedReservation.unit.unitCode ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Project</dt>
+                <dd>{selectedReservation.project.projectCode ?? "-"}</dd>
+              </div>
+              <div>
+                <dt>Amount</dt>
+                <dd>{money(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
+              </div>
+              <div>
+                <dt>Date</dt>
+                <dd>{formatDate(selectedReservation.reservationDate)}</dd>
+              </div>
+              <div>
+                <dt>Expiry</dt>
+                <dd>{formatDate(selectedReservation.expiryDate)}</dd>
+              </div>
+            </dl>
 
-              <button
-                className="crm-secondary-button crm-full-button"
-                disabled={!selectedReservation.isActive || cancelMutation.isPending}
-                onClick={() => cancelMutation.mutate(selectedReservation.id)}
-                type="button"
-              >
-                {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
-              </button>
+            <button
+              className="crm-secondary-button crm-full-button"
+              disabled={!selectedReservation.isActive || cancelMutation.isPending}
+              onClick={() => cancelMutation.mutate(selectedReservation.id)}
+              type="button"
+            >
+              {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
+            </button>
 
-              <section className="crm-activity-list">
-                <h4>Remarks</h4>
-                <p className="crm-muted-text">{selectedReservation.remarks ?? "No remarks recorded."}</p>
-              </section>
-            </>
-          ) : (
-            <p className="crm-muted-text">Select a reservation to review status, unit, expiry, and cancellation action.</p>
-          )}
-        </aside>
-      </div>
+            <button
+              className="crm-primary-button crm-fit-button"
+              disabled={
+                !selectedReservation.isActive ||
+                selectedReservation.reservationStatus.code === "APPROVED" ||
+                selectedReservation.reservationStatus.code === "CANCELLED" ||
+                approveMutation.isPending
+              }
+              onClick={() => approveMutation.mutate(selectedReservation.id)}
+              type="button"
+            >
+              {selectedReservation.reservationStatus.code === "APPROVED"
+                ? "Approved"
+                : approveMutation.isPending
+                  ? "Approving..."
+                  : "Approve Reservation"}
+            </button>
+
+            <section className="crm-activity-list">
+              <h4>Remarks</h4>
+              <p className="crm-muted-text">{selectedReservation.remarks ?? "No remarks recorded."}</p>
+            </section>
+          </>
+        ) : (
+          <p className="crm-muted-text">Select a reservation to review status, unit, expiry, and cancellation action.</p>
+        )}
+      </section>
     </div>
   );
 }

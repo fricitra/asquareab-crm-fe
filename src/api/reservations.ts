@@ -84,3 +84,8 @@ export async function cancelReservation(id: string, remarks?: string) {
   const response = await apiClient.post<Reservation>(`/reservations/${id}/cancel`, { remarks });
   return response.data;
 }
+
+export async function approveReservation(id: string, remarks?: string) {
+  const response = await apiClient.post<Reservation>(`/reservations/${id}/approve`, { remarks });
+  return response.data;
+}
