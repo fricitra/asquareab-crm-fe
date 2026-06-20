@@ -4,10 +4,13 @@ import { useAuthStore } from "../store/auth-store";
 const navItems = [
   { label: "Dashboard", to: "/" },
   { label: "Inventory", to: "/inventory" },
+  { label: "Customers", to: "/customers" },
   { label: "Leads", to: "/leads" },
   { label: "Opportunities", to: "/opportunities" },
+  { label: "Proposals", to: "/proposals" },
   { label: "Reservations", to: "/reservations" },
-  { label: "Contracts", to: "/contracts" }
+  { label: "Contracts", to: "/contracts" },
+  { label: "Reference Data", to: "/reference-data" }
 ];
 
 export function AppShell() {

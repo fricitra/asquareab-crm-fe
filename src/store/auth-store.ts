@@ -6,6 +6,11 @@ type AuthUser = {
   username: string;
   email: string;
   fullName?: string;
+  roles?: Array<{
+    code: string;
+    name: string;
+    isPrimary: boolean;
+  }>;
 };
 
 type AuthState = {
