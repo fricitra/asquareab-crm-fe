@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
+import { listCurrencies } from "../api/currencies";
 import { listUnits } from "../api/inventory";
 import { listOpportunities } from "../api/opportunities";
 import {
@@ -179,7 +180,7 @@ export function ProposalsPage() {
       opportunityId: "",
       unitId: "",
       validUntil: "",
-      currencyCode: "AED",
+      currencyCode: "USD",
       listPrice: "",
       proposedPrice: "",
       discountAmount: "",
@@ -212,8 +213,14 @@ export function ProposalsPage() {
     queryFn: () => listUnits(),
     staleTime: 10_000
   });
+  const currenciesQuery = useQuery({
+    queryKey: ["currencies", "proposal-dropdown"],
+    queryFn: () => listCurrencies({ dropdownOnly: true, activeOnly: true }),
+    staleTime: 60_000
+  });
 
   const proposalRows = proposalsQuery.data?.items ?? [];
+  const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProposal = proposalDetailQuery.data ?? proposalRows.find((proposal) => proposal.id === selectedProposalId) ?? null;
   const selectedOpportunityId = proposalForm.watch("opportunityId");
   const selectedUnitId = proposalForm.watch("unitId");
@@ -260,7 +267,7 @@ export function ProposalsPage() {
         opportunityId: "",
         unitId: "",
         validUntil: "",
-        currencyCode: "AED",
+        currencyCode: "USD",
         listPrice: "",
         proposedPrice: "",
         discountAmount: "",
@@ -358,7 +365,7 @@ export function ProposalsPage() {
                   const unit = (unitsQuery.data?.items ?? []).find((item) => item.id === event.target.value);
                   if (unit) {
                     proposalForm.setValue("listPrice", String(unit.basePrice ?? ""));
-                    proposalForm.setValue("currencyCode", unit.currencyCode ?? "AED");
+                    proposalForm.setValue("currencyCode", unit.currencyCode ?? "USD");
                   }
                 }
               })}
@@ -377,7 +384,14 @@ export function ProposalsPage() {
           </label>
           <label className="crm-field">
             <span className="crm-label">Currency</span>
-            <input className="crm-input" {...proposalForm.register("currencyCode")} />
+            <select className="crm-input" {...proposalForm.register("currencyCode")}>
+              <option value="">Select currency</option>
+              {currencyRows.map((currency) => (
+                <option key={currency.id} value={currency.currencyCode}>
+                  {currency.currencyCode} - {currency.currencyName}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="crm-field">
             <span className="crm-label">List Price</span>

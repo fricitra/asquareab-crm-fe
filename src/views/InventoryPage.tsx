@@ -13,6 +13,7 @@ import {
   type Project,
   type Unit
 } from "../api/inventory";
+import { listCurrencies } from "../api/currencies";
 import { getReferenceFamily } from "../api/reference-data";
 
 type InventoryTab = "projects" | "units" | "availability";
@@ -105,7 +106,7 @@ export function InventoryPage() {
       name: "",
       locationCode: "",
       legalEntityCode: "",
-      currencyCode: "AED",
+      currencyCode: "USD",
       description: "",
       remarks: ""
     }
@@ -122,7 +123,7 @@ export function InventoryPage() {
       grossArea: "",
       netArea: "",
       basePrice: "",
-      currencyCode: "AED",
+      currencyCode: "USD",
       availabilityStatusRefId: "",
       remarks: ""
     }
@@ -169,13 +170,14 @@ export function InventoryPage() {
     staleTime: 60_000
   });
   const currenciesQuery = useQuery({
-    queryKey: ["reference", "inventory-currencies"],
-    queryFn: () => getReferenceFamily("INVENTORY", "CURRENCY"),
+    queryKey: ["currencies", "inventory-dropdown"],
+    queryFn: () => listCurrencies({ dropdownOnly: true, activeOnly: true }),
     staleTime: 60_000
   });
 
   const projectRows = projectsQuery.data?.items ?? [];
   const unitRows = unitsQuery.data?.items ?? [];
+  const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProject = selectedProjectQuery.data;
   const selectedUnit = selectedUnitQuery.data;
 
@@ -202,7 +204,7 @@ export function InventoryPage() {
     mutationFn: (values: ProjectFormValues) => createProject(projectPayload(values)),
     onSuccess: (project) => {
       setSelectedProjectId(project.id);
-      projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "AED", description: "", remarks: "" });
+      projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "USD", description: "", remarks: "" });
       refreshInventory("Project saved.");
     },
     onError: () => setMessage("Project could not be saved. Check code and required fields.")
@@ -219,7 +221,7 @@ export function InventoryPage() {
     mutationFn: (values: UnitFormValues) => createUnit(unitPayload(values)),
     onSuccess: (unit) => {
       setSelectedUnitId(unit.id);
-      unitForm.reset({ projectId: "", unitCode: "", unitName: "", blockCode: "", floorNo: "", unitTypeRefId: "", bedroomCount: "", grossArea: "", netArea: "", basePrice: "", currencyCode: "AED", availabilityStatusRefId: "", remarks: "" });
+      unitForm.reset({ projectId: "", unitCode: "", unitName: "", blockCode: "", floorNo: "", unitTypeRefId: "", bedroomCount: "", grossArea: "", netArea: "", basePrice: "", currencyCode: "USD", availabilityStatusRefId: "", remarks: "" });
       refreshInventory("Unit saved.");
     },
     onError: () => setMessage("Unit could not be saved. Check project, unit code, and status.")
@@ -264,7 +266,7 @@ export function InventoryPage() {
       name: project.name,
       locationCode: project.locationCode ?? "",
       legalEntityCode: project.legalEntityCode ?? "",
-      currencyCode: project.currencyCode ?? "AED",
+      currencyCode: project.currencyCode ?? "USD",
       description: project.description ?? "",
       remarks: project.remarks ?? ""
     });
@@ -283,7 +285,7 @@ export function InventoryPage() {
       grossArea: unit.grossArea?.toString() ?? "",
       netArea: unit.netArea?.toString() ?? "",
       basePrice: unit.basePrice?.toString() ?? "",
-      currencyCode: unit.currencyCode ?? "AED",
+      currencyCode: unit.currencyCode ?? "USD",
       availabilityStatusRefId: unit.availabilityStatus.id,
       remarks: unit.remarks ?? ""
     });
@@ -302,7 +304,7 @@ export function InventoryPage() {
       grossArea: "",
       netArea: "",
       basePrice: "",
-      currencyCode: "AED",
+      currencyCode: "USD",
       availabilityStatusRefId: "",
       remarks: ""
     });
@@ -396,7 +398,7 @@ export function InventoryPage() {
                 className="crm-secondary-button crm-fit-button"
                 onClick={() => {
                   setSelectedProjectId(null);
-                  projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "AED", description: "", remarks: "" });
+                  projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "USD", description: "", remarks: "" });
                 }}
                 type="button"
               >
@@ -420,9 +422,9 @@ export function InventoryPage() {
                 <span className="crm-label">Currency</span>
                 <select className="crm-input" {...projectForm.register("currencyCode")}>
                   <option value="">Select currency</option>
-                  {(currenciesQuery.data ?? []).map((item) => (
-                    <option key={item.id} value={item.level2Code}>
-                      {item.level2Name}
+                  {currencyRows.map((item) => (
+                    <option key={item.id} value={item.currencyCode}>
+                      {item.currencyCode} - {item.currencyName}
                     </option>
                   ))}
                 </select>
@@ -586,9 +588,9 @@ export function InventoryPage() {
                   <span className="crm-label">Currency</span>
                   <select className="crm-input" {...unitForm.register("currencyCode")}>
                     <option value="">Default project currency</option>
-                    {(currenciesQuery.data ?? []).map((item) => (
-                      <option key={item.id} value={item.level2Code}>
-                        {item.level2Name}
+                    {currencyRows.map((item) => (
+                      <option key={item.id} value={item.currencyCode}>
+                        {item.currencyCode} - {item.currencyName}
                       </option>
                     ))}
                   </select>

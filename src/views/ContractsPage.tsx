@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
+import { listCurrencies } from "../api/currencies";
 import {
   cancelContract,
   createContract,
@@ -210,7 +211,7 @@ export function ContractsPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const contractForm = useForm<ContractFormValues>({
-    defaultValues: { reservationId: "", contractValue: "", currencyCode: "AED", remarks: "" }
+    defaultValues: { reservationId: "", contractValue: "", currencyCode: "USD", remarks: "" }
   });
   const paymentPlanForm = useForm<PaymentPlanFormValues>({
     defaultValues: {
@@ -245,6 +246,11 @@ export function ContractsPage() {
     queryFn: () => listReservations(),
     staleTime: 10_000
   });
+  const currenciesQuery = useQuery({
+    queryKey: ["currencies", "contract-dropdown"],
+    queryFn: () => listCurrencies({ contractAllowed: true, activeOnly: true }),
+    staleTime: 60_000
+  });
 
   const refreshContract = (contract: Contract, successMessage: string) => {
     setMessage(successMessage);
@@ -265,7 +271,7 @@ export function ContractsPage() {
       }),
     onSuccess: (contract) => {
       refreshContract(contract, "Contract draft is ready.");
-      contractForm.reset({ reservationId: "", contractValue: "", currencyCode: "AED", remarks: "" });
+      contractForm.reset({ reservationId: "", contractValue: "", currencyCode: "USD", remarks: "" });
     },
     onError: () => setMessage("Contract could not be created. Use an approved reservation.")
   });
@@ -286,12 +292,12 @@ export function ContractsPage() {
     onError: () => setMessage("Contract could not be cancelled.")
   });
   const paymentPlanMutation = useMutation({
-    mutationFn: ({ contractId, values }: { contractId: string; values: PaymentPlanFormValues }) => {
+    mutationFn: ({ contractId, currencyCode, values }: { contractId: string; currencyCode: string | null; values: PaymentPlanFormValues }) => {
       const firstAmount = pickNumber(values.line1Amount);
       const secondAmount = pickNumber(values.line2Amount);
       return createPaymentPlan(contractId, {
         planName: values.planName,
-        currencyCode: "AED",
+        currencyCode: currencyCode ?? "USD",
         remarks: pickString(values.remarks),
         lines: [
           {
@@ -333,6 +339,7 @@ export function ContractsPage() {
   });
 
   const contractRows = contractsQuery.data?.items ?? [];
+  const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedContract = contractDetailQuery.data;
   const selectedContractNextAction = selectedContract ? contractNextAction(selectedContract) : null;
   const selectedContractIsClosed = selectedContract?.erpHandoffStatus === "HANDED_OFF";
@@ -358,7 +365,7 @@ export function ContractsPage() {
   });
   const onPaymentPlanSubmit = paymentPlanForm.handleSubmit((values) => {
     if (!selectedContract) return;
-    paymentPlanMutation.mutate({ contractId: selectedContract.id, values });
+    paymentPlanMutation.mutate({ contractId: selectedContract.id, currencyCode: selectedContract.currencyCode, values });
   });
   const onErpComplete = erpForm.handleSubmit((values) => {
     if (!selectedContract) return;
@@ -422,7 +429,14 @@ export function ContractsPage() {
           </label>
           <label className="crm-field">
             <span className="crm-label">Currency</span>
-            <input className="crm-input" {...contractForm.register("currencyCode")} />
+            <select className="crm-input" {...contractForm.register("currencyCode")}>
+              <option value="">Select currency</option>
+              {currencyRows.map((currency) => (
+                <option key={currency.id} value={currency.currencyCode}>
+                  {currency.currencyCode} - {currency.currencyName}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="crm-field crm-form-wide">
             <span className="crm-label">Remarks</span>

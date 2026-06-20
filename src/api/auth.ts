@@ -6,6 +6,22 @@ export type LoginPayload = {
   password: string;
 };
 
+export type OtpRequestPayload = {
+  username: string;
+};
+
+export type OtpLoginPayload = {
+  username: string;
+  otp: string;
+};
+
+export type OtpRequestResponse = {
+  username: string;
+  maskedDestination: string;
+  expiresAt: string;
+  devOtp: string;
+};
+
 export type LoginResponse = {
   accessToken: string;
   refreshToken: string;
@@ -14,11 +30,35 @@ export type LoginResponse = {
     username: string;
     email: string;
     fullName?: string;
+    roles?: Array<{
+      code: string;
+      name: string;
+      isPrimary: boolean;
+    }>;
+    permissions?: Array<{
+      code: string;
+      canView: boolean;
+      canCreate: boolean;
+      canUpdate: boolean;
+      canDelete: boolean;
+      canApprove: boolean;
+      canExport: boolean;
+    }>;
   };
 };
 
 export async function login(payload: LoginPayload) {
   const response = await apiClient.post<LoginResponse>("/auth/login", payload);
+  return response.data;
+}
+
+export async function requestOtp(payload: OtpRequestPayload) {
+  const response = await apiClient.post<OtpRequestResponse>("/auth/otp/request", payload);
+  return response.data;
+}
+
+export async function loginWithOtp(payload: OtpLoginPayload) {
+  const response = await apiClient.post<LoginResponse>("/auth/otp/login", payload);
   return response.data;
 }
 

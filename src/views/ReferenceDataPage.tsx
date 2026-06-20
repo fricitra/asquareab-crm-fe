@@ -188,7 +188,7 @@ export function ReferenceDataPage() {
 
       {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
 
-      <section className="crm-action-grid">
+      <section className="crm-action-grid crm-reference-grid">
         <section className="crm-panel">
           <div className="crm-panel-header">
             <h3>Reference Register</h3>

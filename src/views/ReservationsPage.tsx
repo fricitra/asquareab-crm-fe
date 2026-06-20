@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
+import { listCurrencies } from "../api/currencies";
 import { listUnits } from "../api/inventory";
 import { listOpportunities } from "../api/opportunities";
 import {
@@ -101,7 +102,7 @@ export function ReservationsPage() {
       opportunityId: "",
       unitId: "",
       reservationAmount: "",
-      currencyCode: "AED",
+      currencyCode: "USD",
       expiryDate: "",
       remarks: ""
     }
@@ -130,6 +131,11 @@ export function ReservationsPage() {
     queryFn: () => listUnits(),
     staleTime: 10_000
   });
+  const currenciesQuery = useQuery({
+    queryKey: ["currencies", "reservation-dropdown"],
+    queryFn: () => listCurrencies({ dropdownOnly: true, activeOnly: true }),
+    staleTime: 60_000
+  });
 
   const createMutation = useMutation({
     mutationFn: (values: ReservationFormValues) =>
@@ -144,7 +150,7 @@ export function ReservationsPage() {
     onSuccess: (reservation) => {
       setMessage("Reservation created.");
       setSelectedReservationId(reservation.id);
-      reservationForm.reset({ opportunityId: "", unitId: "", reservationAmount: "", currencyCode: "AED", expiryDate: "", remarks: "" });
+      reservationForm.reset({ opportunityId: "", unitId: "", reservationAmount: "", currencyCode: "USD", expiryDate: "", remarks: "" });
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
     },
@@ -175,6 +181,7 @@ export function ReservationsPage() {
 
   const reservationRows = reservationsQuery.data?.items ?? [];
   const availableUnits = (unitsQuery.data?.items ?? []).filter((unit) => unit.availabilityStatus.code === "AVAILABLE");
+  const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedReservation = reservationDetailQuery.data;
 
   const stats = useMemo(() => {
@@ -256,7 +263,14 @@ export function ReservationsPage() {
           </label>
           <label className="crm-field">
             <span className="crm-label">Currency</span>
-            <input className="crm-input" {...reservationForm.register("currencyCode")} />
+            <select className="crm-input" {...reservationForm.register("currencyCode")}>
+              <option value="">Select currency</option>
+              {currencyRows.map((currency) => (
+                <option key={currency.id} value={currency.currencyCode}>
+                  {currency.currencyCode} - {currency.currencyName}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="crm-field">
             <span className="crm-label">Expiry</span>

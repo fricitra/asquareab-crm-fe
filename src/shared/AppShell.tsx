@@ -1,16 +1,34 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/auth-store";
 
-const navItems = [
-  { label: "Dashboard", to: "/" },
-  { label: "Inventory", to: "/inventory" },
-  { label: "Customers", to: "/customers" },
-  { label: "Leads", to: "/leads" },
-  { label: "Opportunities", to: "/opportunities" },
-  { label: "Proposals", to: "/proposals" },
-  { label: "Reservations", to: "/reservations" },
-  { label: "Contracts", to: "/contracts" },
-  { label: "Reference Data", to: "/reference-data" }
+const dashboardItem = { label: "Dashboard", to: "/" };
+
+const navGroups = [
+  {
+    label: "Customer Workflow",
+    items: [
+      { label: "Leads", to: "/leads" },
+      { label: "Opportunities", to: "/opportunities" },
+      { label: "Proposals", to: "/proposals" },
+      { label: "Reservations", to: "/reservations" },
+      { label: "Contracts", to: "/contracts" }
+    ]
+  },
+  {
+    label: "Master Data",
+    items: [
+      { label: "Inventory", to: "/inventory" },
+      { label: "Customers", to: "/customers" }
+    ]
+  },
+  {
+    label: "Settings",
+    items: [
+      { label: "Admin", to: "/admin" },
+      { label: "Currencies", to: "/currencies" },
+      { label: "Reference Data", to: "/reference-data" }
+    ]
+  }
 ];
 
 export function AppShell() {
@@ -27,15 +45,27 @@ export function AppShell() {
           Leads, opportunities, inventory reservations, and customer lifecycle operations in one focused workspace.
         </p>
         <nav className="crm-nav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) => `crm-nav-link${isActive ? " active" : ""}`}
-            >
-              {item.label}
-            </NavLink>
+          <NavLink
+            to={dashboardItem.to}
+            end
+            className={({ isActive }) => `crm-nav-link${isActive ? " active" : ""}`}
+          >
+            {dashboardItem.label}
+          </NavLink>
+          {navGroups.map((group) => (
+            <section className="crm-nav-group" key={group.label}>
+              <p className="crm-nav-group-label">{group.label}</p>
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/"}
+                  className={({ isActive }) => `crm-nav-link${isActive ? " active" : ""}`}
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </section>
           ))}
         </nav>
       </aside>

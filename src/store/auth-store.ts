@@ -11,6 +11,15 @@ type AuthUser = {
     name: string;
     isPrimary: boolean;
   }>;
+  permissions?: Array<{
+    code: string;
+    canView: boolean;
+    canCreate: boolean;
+    canUpdate: boolean;
+    canDelete: boolean;
+    canApprove: boolean;
+    canExport: boolean;
+  }>;
 };
 
 type AuthState = {
