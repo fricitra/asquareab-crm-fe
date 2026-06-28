@@ -135,6 +135,8 @@ export function CustomersPage() {
   const [search, setSearch] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedBrokerId, setSelectedBrokerId] = useState<string | null>(null);
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [brokerModalOpen, setBrokerModalOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const customerForm = useForm<CustomerFormValues>({ defaultValues: blankCustomer });
@@ -201,6 +203,7 @@ export function CustomersPage() {
     mutationFn: (values: CustomerFormValues) => createCustomer(customerPayload(values)),
     onSuccess: (customer) => {
       setSelectedCustomerId(customer.id);
+      setCustomerModalOpen(false);
       customerForm.reset(blankCustomer);
       refresh("Customer saved.");
     },
@@ -210,6 +213,7 @@ export function CustomersPage() {
     mutationFn: ({ id, values }: { id: string; values: CustomerFormValues }) => updateCustomer(id, customerPayload(values)),
     onSuccess: (customer) => {
       setSelectedCustomerId(customer.id);
+      setCustomerModalOpen(false);
       refresh("Customer updated.");
     },
     onError: () => setMessage("Customer could not be updated.")
@@ -218,6 +222,7 @@ export function CustomersPage() {
     mutationFn: (values: BrokerFormValues) => createBroker(brokerPayload(values)),
     onSuccess: (broker) => {
       setSelectedBrokerId(broker.id);
+      setBrokerModalOpen(false);
       brokerForm.reset(blankBroker);
       refresh("Broker saved.");
     },
@@ -227,6 +232,7 @@ export function CustomersPage() {
     mutationFn: ({ id, values }: { id: string; values: BrokerFormValues }) => updateBroker(id, brokerPayload(values)),
     onSuccess: (broker) => {
       setSelectedBrokerId(broker.id);
+      setBrokerModalOpen(false);
       refresh("Broker updated.");
     },
     onError: () => setMessage("Broker could not be updated.")
@@ -234,6 +240,7 @@ export function CustomersPage() {
 
   const loadCustomer = (customer: Customer) => {
     setSelectedCustomerId(customer.id);
+    setCustomerModalOpen(true);
     customerForm.reset({
       crmCustomerCode: customer.crmCustomerCode,
       displayName: customer.displayName,
@@ -255,6 +262,7 @@ export function CustomersPage() {
 
   const loadBroker = (broker: Broker) => {
     setSelectedBrokerId(broker.id);
+    setBrokerModalOpen(true);
     brokerForm.reset({
       brokerCode: broker.brokerCode,
       name: broker.name,
@@ -335,11 +343,24 @@ export function CustomersPage() {
       </section>
 
       {activeTab === "customers" ? (
-        <section className="crm-action-grid crm-inventory-grid">
+        <section className="crm-management-workspace">
           <section className="crm-panel">
             <div className="crm-panel-header">
               <h3>Customer Register</h3>
-              <input className="crm-input crm-search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, phone, email" value={search} />
+              <div className="crm-unit-register-actions">
+                <input className="crm-input crm-search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search customer, phone, email" value={search} />
+                <button
+                  className="crm-primary-button"
+                  onClick={() => {
+                    setSelectedCustomerId(null);
+                    customerForm.reset(blankCustomer);
+                    setCustomerModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  New Customer
+                </button>
+              </div>
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
@@ -373,7 +394,9 @@ export function CustomersPage() {
             </div>
           </section>
 
-          <form className="crm-panel crm-form" onSubmit={onCustomerSubmit}>
+          {customerModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <form aria-modal="true" className="crm-modal crm-management-modal crm-form" onSubmit={onCustomerSubmit} role="dialog">
             <div className="crm-panel-header">
               <h3>{selectedCustomer ? "Edit Customer" : "Create Customer"}</h3>
               <button
@@ -381,10 +404,11 @@ export function CustomersPage() {
                 onClick={() => {
                   setSelectedCustomerId(null);
                   customerForm.reset(blankCustomer);
+                  setCustomerModalOpen(false);
                 }}
                 type="button"
               >
-                New
+                Close
               </button>
             </div>
             <label className="crm-field">
@@ -470,15 +494,30 @@ export function CustomersPage() {
               </dl>
             ) : null}
           </form>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
       {activeTab === "brokers" ? (
-        <section className="crm-action-grid crm-inventory-grid">
+        <section className="crm-management-workspace">
           <section className="crm-panel">
             <div className="crm-panel-header">
               <h3>Broker Register</h3>
-              <input className="crm-input crm-search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search broker, phone, email" value={search} />
+              <div className="crm-unit-register-actions">
+                <input className="crm-input crm-search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search broker, phone, email" value={search} />
+                <button
+                  className="crm-primary-button"
+                  onClick={() => {
+                    setSelectedBrokerId(null);
+                    brokerForm.reset(blankBroker);
+                    setBrokerModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  New Broker
+                </button>
+              </div>
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
@@ -512,7 +551,9 @@ export function CustomersPage() {
             </div>
           </section>
 
-          <form className="crm-panel crm-form" onSubmit={onBrokerSubmit}>
+          {brokerModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <form aria-modal="true" className="crm-modal crm-management-modal crm-form" onSubmit={onBrokerSubmit} role="dialog">
             <div className="crm-panel-header">
               <h3>{selectedBroker ? "Edit Broker" : "Create Broker"}</h3>
               <button
@@ -520,10 +561,11 @@ export function CustomersPage() {
                 onClick={() => {
                   setSelectedBrokerId(null);
                   brokerForm.reset(blankBroker);
+                  setBrokerModalOpen(false);
                 }}
                 type="button"
               >
-                New
+                Close
               </button>
             </div>
             <label className="crm-field">
@@ -577,6 +619,8 @@ export function CustomersPage() {
               {selectedBroker ? "Update Broker" : "Create Broker"}
             </button>
           </form>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>

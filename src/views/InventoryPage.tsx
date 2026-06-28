@@ -230,6 +230,14 @@ function area(value: number | null) {
   return value === null ? "-" : value.toLocaleString();
 }
 
+function yesNo(value: boolean | null | undefined) {
+  return value ? "Yes" : "No";
+}
+
+function linkName(value: { name: string | null } | null | undefined) {
+  return value?.name ?? "-";
+}
+
 function blankConfiguration(): ConfigurationFormValues {
   return Object.fromEntries(configurationFields.map((field) => [field.name, ""]).concat([["remarks", ""]])) as ConfigurationFormValues;
 }
@@ -314,9 +322,13 @@ function CheckField({ label, name, register }: { label: string; name: string; re
 
 export function InventoryPage() {
   const queryClient = useQueryClient();
+  const unitPageSize = 20;
   const [activeTab, setActiveTab] = useState<InventoryTab>("projects");
   const [unitDetailTab, setUnitDetailTab] = useState<UnitDetailTab>("identification");
+  const [unitEditMode, setUnitEditMode] = useState(false);
   const [search, setSearch] = useState("");
+  const [unitPage, setUnitPage] = useState(1);
+  const [unitModalOpen, setUnitModalOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -413,7 +425,11 @@ export function InventoryPage() {
   });
 
   const projectsQuery = useQuery({ queryKey: ["inventory", "projects", search], queryFn: () => listProjects(search), staleTime: 10_000 });
-  const unitsQuery = useQuery({ queryKey: ["inventory", "units", search], queryFn: () => listUnits(search), staleTime: 10_000 });
+  const unitsQuery = useQuery({
+    queryKey: ["inventory", "units", search, unitPage],
+    queryFn: () => listUnits({ search, limit: unitPageSize, offset: (unitPage - 1) * unitPageSize }),
+    staleTime: 10_000
+  });
   const selectedProjectQuery = useQuery({ queryKey: ["inventory", "project", selectedProjectId], queryFn: () => getProject(selectedProjectId ?? ""), enabled: Boolean(selectedProjectId) });
   const selectedUnitQuery = useQuery({ queryKey: ["inventory", "unit", selectedUnitId], queryFn: () => getUnit(selectedUnitId ?? ""), enabled: Boolean(selectedUnitId) });
   const unitTypesQuery = useQuery({ queryKey: ["reference", "inventory-unit-types"], queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE"), staleTime: 60_000 });
@@ -435,9 +451,12 @@ export function InventoryPage() {
 
   const projectRows = projectsQuery.data?.items ?? [];
   const unitRows = unitsQuery.data?.items ?? [];
+  const unitPagination = unitsQuery.data?.pagination ?? { limit: unitPageSize, offset: 0, total: 0 };
+  const unitTotalPages = Math.max(1, Math.ceil(unitPagination.total / unitPageSize));
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProject = selectedProjectQuery.data;
   const selectedUnit = selectedUnitQuery.data;
+  const activeUnitDetailTab = unitDetailTabs.find((tab) => tab.id === unitDetailTab) ?? unitDetailTabs[0];
 
   const stats = useMemo(() => {
     const totalUnits = unitsQuery.data?.pagination.total ?? 0;
@@ -690,11 +709,15 @@ export function InventoryPage() {
     setActiveTab("units");
     setSelectedUnitId(unit.id);
     setUnitDetailTab("identification");
+    setUnitEditMode(false);
+    setUnitModalOpen(true);
   };
 
   const resetUnitForm = () => {
     setSelectedUnitId(null);
     setUnitDetailTab("identification");
+    setUnitEditMode(true);
+    setUnitModalOpen(true);
     unitForm.reset({
       projectId: "",
       unitCode: "",
@@ -715,6 +738,140 @@ export function InventoryPage() {
       availabilityStatusRefId: "",
       remarks: ""
     });
+  };
+
+  const renderUnitSectionView = () => {
+    if (!selectedUnit) return <p className="crm-muted-text">Create the unit first, then complete catalogue details.</p>;
+
+    const catalogue = selectedUnit.catalogue;
+    const configuration = catalogue?.configuration;
+    const areaSchedule = catalogue?.areaSchedule;
+    const location = catalogue?.locationAttributes;
+    const parking = catalogue?.parkingStorage;
+    const specification = catalogue?.specification;
+    const sales = catalogue?.salesInformation;
+
+    if (unitDetailTab === "identification") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          <div><dt>Project</dt><dd>{selectedUnit.project.projectCode} - {selectedUnit.project.name ?? "-"}</dd></div>
+          <div><dt>Unit</dt><dd>{selectedUnit.unitCode}</dd></div>
+          <div><dt>Unit Name</dt><dd>{selectedUnit.unitName ?? "-"}</dd></div>
+          <div><dt>Inventory Code</dt><dd>{selectedUnit.inventoryCode ?? "-"}</dd></div>
+          <div><dt>Phase</dt><dd>{selectedUnit.developmentPhase ?? "-"}</dd></div>
+          <div><dt>Building</dt><dd>{selectedUnit.buildingName ?? "-"}</dd></div>
+          <div><dt>Block / Floor</dt><dd>{selectedUnit.blockCode ?? "-"} / {selectedUnit.floorNo ?? "-"}</dd></div>
+          <div><dt>Type</dt><dd>{linkName(selectedUnit.unitType)} / {linkName(selectedUnit.unitSubType)}</dd></div>
+          <div><dt>Stack</dt><dd>{linkName(selectedUnit.stack)}</dd></div>
+          <div><dt>Area</dt><dd>{area(selectedUnit.netArea)} net / {area(selectedUnit.grossArea)} gross</dd></div>
+          <div><dt>Price</dt><dd>{money(selectedUnit.basePrice, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Status</dt><dd>{linkName(selectedUnit.availabilityStatus)}</dd></div>
+        </dl>
+      );
+    }
+
+    if (unitDetailTab === "configuration") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          {configurationFields.map((field) => (
+            <div key={field.name}><dt>{field.label}</dt><dd>{configuration?.[field.name as keyof typeof configuration] ?? "-"}</dd></div>
+          ))}
+          <div><dt>Remarks</dt><dd>{configuration?.remarks ?? "-"}</dd></div>
+        </dl>
+      );
+    }
+
+    if (unitDetailTab === "area") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          <div><dt>Area UOM</dt><dd>{areaSchedule?.areaUom ?? "-"}</dd></div>
+          {areaFields.map((field) => (
+            <div key={field.name}><dt>{field.label}</dt><dd>{areaSchedule?.[field.name as keyof typeof areaSchedule] ?? "-"}</dd></div>
+          ))}
+          <div><dt>Remarks</dt><dd>{areaSchedule?.remarks ?? "-"}</dd></div>
+        </dl>
+      );
+    }
+
+    if (unitDetailTab === "location") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          <div><dt>View Type</dt><dd>{linkName(location?.viewType)}</dd></div>
+          <div><dt>Orientation</dt><dd>{linkName(location?.orientation)}</dd></div>
+          <div><dt>Ocean Front</dt><dd>{yesNo(location?.oceanFront)}</dd></div>
+          <div><dt>Ocean View</dt><dd>{yesNo(location?.oceanView)}</dd></div>
+          <div><dt>Partial Ocean View</dt><dd>{yesNo(location?.partialOceanView)}</dd></div>
+          <div><dt>Garden View</dt><dd>{yesNo(location?.gardenView)}</dd></div>
+          <div><dt>Pool View</dt><dd>{yesNo(location?.poolView)}</dd></div>
+          <div><dt>Corner Unit</dt><dd>{yesNo(location?.cornerUnit)}</dd></div>
+          <div><dt>End Unit</dt><dd>{yesNo(location?.endUnit)}</dd></div>
+          <div><dt>Premium Stack</dt><dd>{yesNo(location?.premiumStack)}</dd></div>
+          <div><dt>Penthouse Level</dt><dd>{yesNo(location?.penthouseLevel)}</dd></div>
+          <div><dt>Remarks</dt><dd>{location?.remarks ?? "-"}</dd></div>
+        </dl>
+      );
+    }
+
+    if (unitDetailTab === "parking") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          <div><dt>Parking Allocation</dt><dd>{linkName(parking?.parkingAllocation)}</dd></div>
+          <div><dt>Parking Type</dt><dd>{linkName(parking?.parkingType)}</dd></div>
+          <div><dt>Parking Bay</dt><dd>{parking?.parkingBayNumber ?? "-"}</dd></div>
+          <div><dt>EV Charging</dt><dd>{yesNo(parking?.evChargingProvision)}</dd></div>
+          <div><dt>Storage Allocation</dt><dd>{linkName(parking?.storageAllocation)}</dd></div>
+          <div><dt>Storage Locker</dt><dd>{yesNo(parking?.storageLocker)}</dd></div>
+          <div><dt>Locker Number</dt><dd>{parking?.storageLockerNumber ?? "-"}</dd></div>
+          <div><dt>Remarks</dt><dd>{parking?.remarks ?? "-"}</dd></div>
+        </dl>
+      );
+    }
+
+    if (unitDetailTab === "specification") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          <div><dt>Automation Package</dt><dd>{linkName(specification?.homeAutomationPackage)}</dd></div>
+          <div><dt>Appliance Package</dt><dd>{linkName(specification?.premiumAppliancePackage)}</dd></div>
+          <div><dt>Floor Finish</dt><dd>{linkName(specification?.floorFinishType)}</dd></div>
+          <div><dt>Kitchen Finish</dt><dd>{linkName(specification?.kitchenFinishType)}</dd></div>
+          <div><dt>Bathroom Finish</dt><dd>{linkName(specification?.bathroomFinishType)}</dd></div>
+          <div><dt>Ceiling Height</dt><dd>{specification?.ceilingHeight ?? "-"}</dd></div>
+          <div><dt>Smart Home Ready</dt><dd>{yesNo(specification?.smartHomeReady)}</dd></div>
+          <div><dt>Floor-to-Ceiling Glass</dt><dd>{yesNo(specification?.floorToCeilingGlass)}</dd></div>
+          <div><dt>Private Lift</dt><dd>{yesNo(specification?.privateLiftAccess)}</dd></div>
+          <div><dt>Private Pool</dt><dd>{yesNo(specification?.privatePool)}</dd></div>
+          <div><dt>Remarks</dt><dd>{specification?.remarks ?? "-"}</dd></div>
+        </dl>
+      );
+    }
+
+    if (unitDetailTab === "sales") {
+      return (
+        <dl className="crm-detail-list crm-unit-view-grid">
+          <div><dt>Launch Date</dt><dd>{sales?.launchDate ?? "-"}</dd></div>
+          <div><dt>Sales Release Date</dt><dd>{sales?.salesReleaseDate ?? "-"}</dd></div>
+          <div><dt>Base Selling Price</dt><dd>{money(sales?.baseSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Premium Amount</dt><dd>{money(sales?.premiumAmount ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Discount Ceiling %</dt><dd>{sales?.discountCeilingPct ?? "-"}</dd></div>
+          <div><dt>Approved Selling Price</dt><dd>{money(sales?.approvedSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Reservation Amount</dt><dd>{money(sales?.reservationAmount ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Current Market Value</dt><dd>{money(sales?.currentMarketValue ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Sales Status</dt><dd>{sales?.salesStatus?.name ?? "-"}</dd></div>
+          <div><dt>Remarks</dt><dd>{sales?.remarks ?? "-"}</dd></div>
+        </dl>
+      );
+    }
+
+    return (
+      <div className="crm-linked-module-grid">
+        <article><strong>Reservation</strong><span>{selectedUnit.reservationStatus.name ?? "No active reservation"}</span></article>
+        <article><strong>SPA / Contract</strong><span>Linked from Contracts workspace</span></article>
+        <article><strong>Collections</strong><span>Separate management module planned</span></article>
+        <article><strong>Handover</strong><span>Separate management module planned</span></article>
+        <article><strong>Title Transfer</strong><span>Separate management module planned</span></article>
+        <article><strong>Investor Reporting</strong><span>Separate BI/reporting module planned</span></article>
+      </div>
+    );
   };
 
   return (
@@ -801,48 +958,123 @@ export function InventoryPage() {
       ) : null}
 
       {activeTab === "units" || activeTab === "availability" ? (
-        <section className="crm-action-grid crm-unit-catalogue-grid">
-          <section className="crm-panel">
+        <section className="crm-unit-workspace">
+          <section className="crm-panel crm-unit-register-panel">
             <div className="crm-panel-header">
               <h3>{activeTab === "units" ? "Unit Register" : "Availability Register"}</h3>
-              <input className="crm-input crm-search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search unit, project, status" value={search} />
+              <div className="crm-unit-register-actions">
+                <input
+                  className="crm-input crm-search-input"
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setUnitPage(1);
+                  }}
+                  placeholder="Search unit, project, status"
+                  value={search}
+                />
+                {activeTab === "units" ? (
+                  <button className="crm-primary-button" onClick={resetUnitForm} type="button">
+                    New Unit
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="crm-table-wrap">
-              <table className="crm-table">
-                <thead><tr><th>Unit</th><th>Project</th><th>Type</th><th>Price</th><th>Status</th></tr></thead>
+              <table className="crm-table crm-unit-register-table">
+                <thead><tr><th>Unit</th><th>Project</th><th>Type</th><th>Area</th><th>Price</th><th>Status</th><th>Action</th></tr></thead>
                 <tbody>
                   {unitRows.map((unit) => (
-                    <tr className={selectedUnitId === unit.id ? "is-selected" : ""} key={unit.id} onClick={() => loadUnitForm(unit)}>
+                    <tr className={selectedUnitId === unit.id ? "is-selected" : ""} key={unit.id}>
                       <td><strong>{unit.unitCode}</strong><span>{unit.unitName ?? "Unit"}</span></td>
                       <td><strong>{unit.project.projectCode}</strong><span>{unit.project.name ?? "-"}</span></td>
                       <td>{unit.unitType.name ?? "-"}</td>
+                      <td>{area(unit.netArea)}</td>
                       <td>{money(unit.basePrice, unit.currencyCode)}</td>
                       <td><span className={`crm-status-pill crm-status-${unit.availabilityStatus.code?.toLowerCase() ?? "default"}`}>{unit.availabilityStatus.name ?? unit.status}</span></td>
+                      <td>
+                        <button className="crm-secondary-button crm-small-button" onClick={() => loadUnitForm(unit)} type="button">
+                          Open
+                        </button>
+                      </td>
                     </tr>
                   ))}
+                  {unitRows.length === 0 ? (
+                    <tr>
+                      <td className="crm-empty-cell" colSpan={7}>
+                        No units found.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>
+            <div className="crm-pagination">
+              <span>
+                Page {unitPage} of {unitTotalPages} · {unitPagination.total} units
+              </span>
+              <div>
+                <button className="crm-secondary-button" disabled={unitPage <= 1} onClick={() => setUnitPage((current) => Math.max(1, current - 1))} type="button">
+                  Previous
+                </button>
+                <button className="crm-secondary-button" disabled={unitPage >= unitTotalPages} onClick={() => setUnitPage((current) => current + 1)} type="button">
+                  Next
+                </button>
+              </div>
+            </div>
           </section>
 
-          <section className="crm-panel crm-unit-catalogue-panel">
+          {unitModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-unit-detail-modal crm-unit-catalogue-panel" role="dialog">
             <div className="crm-panel-header">
               <div>
                 <h3>{selectedUnit ? selectedUnit.unitCode : "Create Unit"}</h3>
                 <p className="crm-muted-text">{selectedUnit ? `${selectedUnit.project.projectCode ?? "-"} · ${selectedUnit.unitName ?? "Unit"}` : "Create the unit first, then complete catalogue sections."}</p>
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={resetUnitForm} type="button">New</button>
+              <div className="crm-dashboard-actions">
+                <button className="crm-secondary-button crm-fit-button" onClick={resetUnitForm} type="button">New</button>
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setUnitModalOpen(false)} type="button">Close</button>
+              </div>
             </div>
 
-            <section className="crm-tabs crm-subtabs" aria-label="Unit catalogue tabs">
-              {unitDetailTabs.map((tab) => (
-                <button className={`crm-tab-button${unitDetailTab === tab.id ? " is-active" : ""}`} key={tab.id} onClick={() => setUnitDetailTab(tab.id)} type="button">
-                  {tab.label}
-                </button>
-              ))}
-            </section>
+            <div className="crm-unit-builder">
+              <aside className="crm-unit-section-rail" aria-label="Unit detail sections">
+                {unitDetailTabs.map((tab) => (
+                  <button
+                    className={`crm-unit-section-button${unitDetailTab === tab.id ? " is-active" : ""}`}
+                    key={tab.id}
+                    onClick={() => {
+                      setUnitDetailTab(tab.id);
+                      setUnitEditMode(!selectedUnit);
+                    }}
+                    type="button"
+                  >
+                    <span>{tab.label}</span>
+                    <small>{unitDetailTab === tab.id ? (unitEditMode ? "Editing" : "View") : "Open"}</small>
+                  </button>
+                ))}
+              </aside>
+              <section className="crm-unit-section-panel">
+                <div className="crm-unit-section-heading">
+                  <div>
+                    <h4>{activeUnitDetailTab.label}</h4>
+                    <p className="crm-muted-text">
+                      {unitDetailTab === "linked" ? "Review downstream modules connected to this unit." : "Complete this section, then continue with the next unit detail section."}
+                    </p>
+                  </div>
+                  <div className="crm-dashboard-actions">
+                    <span className="crm-status-pill crm-status-available">{selectedUnit ? (unitEditMode ? "Editing" : "View Mode") : "New Unit"}</span>
+                    {selectedUnit && unitDetailTab !== "linked" && !unitEditMode ? (
+                      <button className="crm-secondary-button crm-small-button" onClick={() => setUnitEditMode(true)} type="button">
+                        Edit
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
 
-            {unitDetailTab === "identification" ? (
+            {!unitEditMode && selectedUnit ? renderUnitSectionView() : null}
+
+            {unitEditMode && unitDetailTab === "identification" ? (
               <form className="crm-form crm-catalogue-form" onSubmit={onUnitSubmit}>
                 <label className="crm-field crm-form-wide">
                   <span className="crm-label">Project</span>
@@ -883,7 +1115,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "configuration" ? (
+            {unitEditMode && unitDetailTab === "configuration" ? (
               <form className="crm-form crm-catalogue-form" onSubmit={configurationForm.handleSubmit((values) => saveSection("configuration", values))}>
                 {configurationFields.map((field) => <label className="crm-field" key={field.name}><span className="crm-label">{field.label}</span><input className="crm-input" {...configurationForm.register(field.name)} /></label>)}
                 <label className="crm-field crm-form-wide"><span className="crm-label">Remarks</span><textarea className="crm-input crm-textarea" {...configurationForm.register("remarks")} /></label>
@@ -891,7 +1123,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "area" ? (
+            {unitEditMode && unitDetailTab === "area" ? (
               <form className="crm-form crm-catalogue-form" onSubmit={areaForm.handleSubmit((values) => saveSection("area", values))}>
                 <label className="crm-field"><span className="crm-label">Area UOM</span><select className="crm-input" {...areaForm.register("areaUom")}><option value="SQM">Square Meter</option><option value="SQFT">Square Feet</option></select></label>
                 {areaFields.map((field) => <label className="crm-field" key={field.name}><span className="crm-label">{field.label}</span><input className="crm-input" {...areaForm.register(field.name)} /></label>)}
@@ -900,7 +1132,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "location" ? (
+            {unitEditMode && unitDetailTab === "location" ? (
               <form className="crm-form" onSubmit={locationForm.handleSubmit((values) => saveSection("location", values))}>
                 <div className="crm-two-col">
                   <ReferenceSelect label="View Type" name="viewTypeRefId" options={viewTypesQuery.data} register={locationForm.register} />
@@ -916,7 +1148,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "parking" ? (
+            {unitEditMode && unitDetailTab === "parking" ? (
               <form className="crm-form" onSubmit={parkingForm.handleSubmit((values) => saveSection("parking", values))}>
                 <div className="crm-two-col">
                   <ReferenceSelect label="Parking Allocation" name="parkingAllocationRefId" options={parkingAllocationsQuery.data} register={parkingForm.register} />
@@ -934,7 +1166,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "specification" ? (
+            {unitEditMode && unitDetailTab === "specification" ? (
               <form className="crm-form" onSubmit={specificationForm.handleSubmit((values) => saveSection("specification", values))}>
                 <div className="crm-two-col">
                   <ReferenceSelect label="Automation Package" name="homeAutomationPackageRefId" options={automationPackagesQuery.data} register={specificationForm.register} />
@@ -954,7 +1186,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "sales" ? (
+            {unitEditMode && unitDetailTab === "sales" ? (
               <form className="crm-form crm-catalogue-form" onSubmit={salesForm.handleSubmit((values) => saveSection("sales", values))}>
                 <label className="crm-field"><span className="crm-label">Launch Date</span><input className="crm-input" type="date" {...salesForm.register("launchDate")} /></label>
                 <label className="crm-field"><span className="crm-label">Sales Release Date</span><input className="crm-input" type="date" {...salesForm.register("salesReleaseDate")} /></label>
@@ -970,7 +1202,7 @@ export function InventoryPage() {
               </form>
             ) : null}
 
-            {unitDetailTab === "linked" ? (
+            {unitEditMode && unitDetailTab === "linked" ? (
               selectedUnit ? (
                 <div className="crm-linked-module-grid">
                   <article><strong>Reservation</strong><span>{selectedUnit.reservationStatus.name ?? "No active reservation"}</span></article>
@@ -982,7 +1214,11 @@ export function InventoryPage() {
                 </div>
               ) : <p className="crm-muted-text">Select a unit to view linked modules.</p>
             ) : null}
+              </section>
+            </div>
           </section>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>

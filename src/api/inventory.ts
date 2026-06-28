@@ -271,12 +271,16 @@ export async function listProjects(search?: string) {
   return response.data;
 }
 
-export async function listUnits(search?: string) {
+export async function listUnits(params?: { search?: string; limit?: number; offset?: number }) {
   const response = await apiClient.get<{
     items: Unit[];
     pagination: { limit: number; offset: number; total: number };
   }>("/inventory/units", {
-    params: search ? { search } : undefined
+    params: {
+      search: params?.search || undefined,
+      limit: params?.limit,
+      offset: params?.offset
+    }
   });
   return response.data;
 }

@@ -95,6 +95,7 @@ export function ReservationsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const reservationForm = useForm<ReservationFormValues>({
@@ -149,6 +150,7 @@ export function ReservationsPage() {
       }),
     onSuccess: (reservation) => {
       setMessage("Reservation created.");
+      setCreateOpen(false);
       setSelectedReservationId(reservation.id);
       reservationForm.reset({ opportunityId: "", unitId: "", reservationAmount: "", currencyCode: "USD", expiryDate: "", remarks: "" });
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
@@ -207,6 +209,9 @@ export function ReservationsPage() {
           <p className="crm-eyebrow">Reservations</p>
           <h2>Unit Reservations</h2>
         </div>
+        <button className="crm-primary-button" onClick={() => setCreateOpen(true)} type="button">
+          New Reservation
+        </button>
       </section>
 
       <section className="crm-grid crm-metric-grid">
@@ -230,9 +235,12 @@ export function ReservationsPage() {
 
       {message ? <div className="crm-error-banner">{message}</div> : null}
 
-      <section className="crm-panel">
+      {createOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+      <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
         <div className="crm-panel-header">
           <h3>Create Reservation</h3>
+          <button className="crm-secondary-button" onClick={() => setCreateOpen(false)} type="button">Close</button>
         </div>
         <form className="crm-form crm-reservation-form" onSubmit={onReservationSubmit}>
           <label className="crm-field">
@@ -285,6 +293,8 @@ export function ReservationsPage() {
           </button>
         </form>
       </section>
+        </div>
+      ) : null}
 
       <section className="crm-panel">
         <div className="crm-panel-header">

@@ -1,4 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { getAppInfo } from "../api/app-info";
 import { useAuthStore } from "../store/auth-store";
 
 const dashboardItem = { label: "Dashboard", to: "/" };
@@ -35,6 +37,16 @@ export function AppShell() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const clearSession = useAuthStore((state) => state.clearSession);
+  const appInfoQuery = useQuery({
+    queryKey: ["app-info"],
+    queryFn: getAppInfo,
+    staleTime: 300_000
+  });
+
+  const applicationName = appInfoQuery.data?.application ?? "ASQUARE CRM";
+  const version = appInfoQuery.data?.version ?? "v1.0.0";
+  const signedInName = user?.fullName ?? user?.username ?? "CRM User";
+  const roleName = user?.roles?.find((role) => role.isPrimary)?.name ?? user?.roles?.[0]?.name ?? "CRM User";
 
   return (
     <div className="crm-shell">
@@ -71,13 +83,21 @@ export function AppShell() {
       </aside>
 
       <main className="crm-content">
-        <header className="crm-topbar">
-          <div>
-            <h2>Welcome back</h2>
-            <p>{user?.fullName ?? user?.username ?? "CRM User"} is signed in.</p>
+        <header className="crm-title-banner">
+          <div className="crm-title-brand">
+            <strong>{applicationName}</strong>
+            <span>{version}</span>
+          </div>
+          <p>Property sales workspace for leads, opportunities, proposals, reservations, contracts, and customer lifecycle operations.</p>
+          <div className="crm-title-actions">
+            <span className="crm-status-pill">CRM available</span>
+            <span className="crm-role-pill">{roleName}</span>
+            <span className="crm-user-chip" title={signedInName}>
+              {signedInName.slice(0, 1).toUpperCase()}
+            </span>
           </div>
           <button
-            className="crm-secondary-button"
+            className="crm-banner-button"
             onClick={() => {
               clearSession();
               navigate("/login", { replace: true });

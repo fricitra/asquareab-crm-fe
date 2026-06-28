@@ -150,6 +150,8 @@ export function AdminPage() {
   const [primaryRoleId, setPrimaryRoleId] = useState("");
   const [permissionRows, setPermissionRows] = useState<RolePermission[]>([]);
   const [resetPasswordValue, setResetPasswordValue] = useState("");
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [roleModalOpen, setRoleModalOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const userForm = useForm<UserFormValues>({ defaultValues: blankUserForm });
@@ -236,13 +238,19 @@ export function AdminPage() {
 
   const createUserMutation = useMutation({
     mutationFn: (values: UserFormValues) => createAdminUser(userPayload(values, true)),
-    onSuccess: (user) => refreshUsers("User created.", user),
+    onSuccess: (user) => {
+      setUserModalOpen(false);
+      refreshUsers("User created.", user);
+    },
     onError: () => setMessage("User could not be created. Check required fields and duplicate username/email.")
   });
 
   const updateUserMutation = useMutation({
     mutationFn: ({ id, values }: { id: string; values: UserFormValues }) => updateAdminUser(id, userPayload(values, false)),
-    onSuccess: (user) => refreshUsers("User updated.", user),
+    onSuccess: (user) => {
+      setUserModalOpen(false);
+      refreshUsers("User updated.", user);
+    },
     onError: () => setMessage("User could not be updated.")
   });
 
@@ -270,13 +278,19 @@ export function AdminPage() {
 
   const createRoleMutation = useMutation({
     mutationFn: (values: RoleFormValues) => createRole(rolePayload(values)),
-    onSuccess: (role) => refreshRoles("Role created.", role),
+    onSuccess: (role) => {
+      setRoleModalOpen(false);
+      refreshRoles("Role created.", role);
+    },
     onError: () => setMessage("Role could not be created. Check duplicate code and required fields.")
   });
 
   const updateRoleMutation = useMutation({
     mutationFn: ({ id, values }: { id: string; values: RoleFormValues }) => updateRole(id, rolePayload(values)),
-    onSuccess: (role) => refreshRoles("Role updated.", role),
+    onSuccess: (role) => {
+      setRoleModalOpen(false);
+      refreshRoles("Role updated.", role);
+    },
     onError: () => setMessage("Role could not be updated.")
   });
 
@@ -367,16 +381,31 @@ export function AdminPage() {
       </section>
 
       {activeTab === "users" ? (
-        <section className="crm-action-grid crm-inventory-grid">
+        <section className="crm-management-workspace">
           <section className="crm-panel">
             <div className="crm-panel-header">
               <h3>User Register</h3>
-              <input
-                className="crm-input crm-search-input"
-                onChange={(event) => setUserSearch(event.target.value)}
-                placeholder="Search user, email, mobile"
-                value={userSearch}
-              />
+              <div className="crm-unit-register-actions">
+                <input
+                  className="crm-input crm-search-input"
+                  onChange={(event) => setUserSearch(event.target.value)}
+                  placeholder="Search user, email, mobile"
+                  value={userSearch}
+                />
+                <button
+                  className="crm-primary-button"
+                  onClick={() => {
+                    setSelectedUserId(null);
+                    setSelectedRoleIds([]);
+                    setPrimaryRoleId("");
+                    userForm.reset(blankUserForm);
+                    setUserModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  New User
+                </button>
+              </div>
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
@@ -390,7 +419,14 @@ export function AdminPage() {
                 </thead>
                 <tbody>
                   {userRows.map((user) => (
-                    <tr className={selectedUserId === user.id ? "is-selected" : ""} key={user.id} onClick={() => setSelectedUserId(user.id)}>
+                    <tr
+                      className={selectedUserId === user.id ? "is-selected" : ""}
+                      key={user.id}
+                      onClick={() => {
+                        setSelectedUserId(user.id);
+                        setUserModalOpen(true);
+                      }}
+                    >
                       <td>
                         <strong>{user.fullName}</strong>
                         <span>{user.username} - {user.email}</span>
@@ -410,7 +446,9 @@ export function AdminPage() {
             </div>
           </section>
 
-          <section className="crm-panel">
+          {userModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
             <div className="crm-panel-header">
               <h3>{selectedUser ? "Edit User" : "New User"}</h3>
               <button
@@ -420,10 +458,11 @@ export function AdminPage() {
                   setSelectedRoleIds([]);
                   setPrimaryRoleId("");
                   userForm.reset(blankUserForm);
+                  setUserModalOpen(false);
                 }}
                 type="button"
               >
-                New
+                Close
               </button>
             </div>
 
@@ -548,18 +587,34 @@ export function AdminPage() {
               </section>
             ) : null}
           </section>
+            </div>
+          ) : null}
         </section>
       ) : (
-        <section className="crm-action-grid crm-inventory-grid">
+        <section className="crm-management-workspace">
           <section className="crm-panel">
             <div className="crm-panel-header">
               <h3>Role Register</h3>
-              <input
-                className="crm-input crm-search-input"
-                onChange={(event) => setRoleSearch(event.target.value)}
-                placeholder="Search role code, name"
-                value={roleSearch}
-              />
+              <div className="crm-unit-register-actions">
+                <input
+                  className="crm-input crm-search-input"
+                  onChange={(event) => setRoleSearch(event.target.value)}
+                  placeholder="Search role code, name"
+                  value={roleSearch}
+                />
+                <button
+                  className="crm-primary-button"
+                  onClick={() => {
+                    setSelectedRoleId(null);
+                    setPermissionRows([]);
+                    roleForm.reset(blankRoleForm);
+                    setRoleModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  New Role
+                </button>
+              </div>
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
@@ -572,7 +627,14 @@ export function AdminPage() {
                 </thead>
                 <tbody>
                   {roleRows.map((role) => (
-                    <tr className={selectedRoleId === role.id ? "is-selected" : ""} key={role.id} onClick={() => setSelectedRoleId(role.id)}>
+                    <tr
+                      className={selectedRoleId === role.id ? "is-selected" : ""}
+                      key={role.id}
+                      onClick={() => {
+                        setSelectedRoleId(role.id);
+                        setRoleModalOpen(true);
+                      }}
+                    >
                       <td>
                         <strong>{role.name}</strong>
                         <span>{role.code}</span>
@@ -591,7 +653,9 @@ export function AdminPage() {
             </div>
           </section>
 
-          <section className="crm-panel">
+          {roleModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
             <div className="crm-panel-header">
               <h3>{selectedRole ? "Edit Role" : "New Role"}</h3>
               <button
@@ -600,10 +664,11 @@ export function AdminPage() {
                   setSelectedRoleId(null);
                   setPermissionRows([]);
                   roleForm.reset(blankRoleForm);
+                  setRoleModalOpen(false);
                 }}
                 type="button"
               >
-                New
+                Close
               </button>
             </div>
 
@@ -702,6 +767,8 @@ export function AdminPage() {
               </section>
             ) : null}
           </section>
+            </div>
+          ) : null}
         </section>
       )}
     </div>

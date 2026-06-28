@@ -210,6 +210,8 @@ export function CurrencyMasterPage() {
   const [activeTab, setActiveTab] = useState<CurrencyTab>("currencies");
   const [search, setSearch] = useState("");
   const [selectedCurrencyId, setSelectedCurrencyId] = useState<string | null>(null);
+  const [currencyModalOpen, setCurrencyModalOpen] = useState(false);
+  const [rateModalOpen, setRateModalOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const currencyForm = useForm<CurrencyFormValues>({ defaultValues: blankCurrencyForm });
@@ -287,6 +289,7 @@ export function CurrencyMasterPage() {
     mutationFn: (values: CurrencyFormValues) => createCurrency(currencyPayload(values)),
     onSuccess: (currency) => {
       setSelectedCurrencyId(currency.id);
+      setCurrencyModalOpen(false);
       currencyForm.reset(currencyFormValues(currency));
       refresh("Currency saved.");
     },
@@ -297,6 +300,7 @@ export function CurrencyMasterPage() {
     mutationFn: ({ id, values }: { id: string; values: CurrencyFormValues }) => updateCurrency(id, currencyPayload(values)),
     onSuccess: (currency) => {
       setSelectedCurrencyId(currency.id);
+      setCurrencyModalOpen(false);
       refresh("Currency updated.");
     },
     onError: () => setMessage("Currency could not be updated.")
@@ -314,6 +318,7 @@ export function CurrencyMasterPage() {
   const createRateMutation = useMutation({
     mutationFn: (values: RateFormValues) => createExchangeRate(ratePayload(values)),
     onSuccess: () => {
+      setRateModalOpen(false);
       rateForm.reset(blankRateForm);
       refresh("Exchange rate saved.");
     },
@@ -381,16 +386,29 @@ export function CurrencyMasterPage() {
       </div>
 
       {activeTab === "currencies" ? (
-        <section className="crm-action-grid crm-currency-grid">
+        <section className="crm-management-workspace">
           <section className="crm-panel">
             <div className="crm-panel-header">
               <h3>Currency Register</h3>
-              <input
-                className="crm-input crm-search-input"
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search code, name, symbol"
-                value={search}
-              />
+              <div className="crm-unit-register-actions">
+                <input
+                  className="crm-input crm-search-input"
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search code, name, symbol"
+                  value={search}
+                />
+                <button
+                  className="crm-primary-button"
+                  onClick={() => {
+                    setSelectedCurrencyId(null);
+                    currencyForm.reset(blankCurrencyForm);
+                    setCurrencyModalOpen(true);
+                  }}
+                  type="button"
+                >
+                  New Currency
+                </button>
+              </div>
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
@@ -407,7 +425,10 @@ export function CurrencyMasterPage() {
                     <tr
                       className={selectedCurrencyId === currency.id ? "is-selected" : ""}
                       key={currency.id}
-                      onClick={() => setSelectedCurrencyId(currency.id)}
+                      onClick={() => {
+                        setSelectedCurrencyId(currency.id);
+                        setCurrencyModalOpen(true);
+                      }}
                     >
                       <td>
                         <strong>{currency.currencyCode}</strong>
@@ -439,7 +460,9 @@ export function CurrencyMasterPage() {
             </div>
           </section>
 
-          <section className="crm-panel">
+          {currencyModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
             <div className="crm-panel-header">
               <h3>{selectedCurrency ? "Edit Currency" : "Create Currency"}</h3>
               <button
@@ -447,10 +470,11 @@ export function CurrencyMasterPage() {
                 onClick={() => {
                   setSelectedCurrencyId(null);
                   currencyForm.reset(blankCurrencyForm);
+                  setCurrencyModalOpen(false);
                 }}
                 type="button"
               >
-                New
+                Close
               </button>
             </div>
             <form className="crm-form crm-two-col" onSubmit={onCurrencySubmit}>
@@ -514,6 +538,8 @@ export function CurrencyMasterPage() {
               </button>
             </form>
           </section>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -599,10 +625,20 @@ export function CurrencyMasterPage() {
       ) : null}
 
       {activeTab === "rates" ? (
-        <section className="crm-action-grid">
+        <section className="crm-management-workspace">
           <section className="crm-panel">
             <div className="crm-panel-header">
               <h3>Exchange Rate Register</h3>
+              <button
+                className="crm-primary-button"
+                onClick={() => {
+                  rateForm.reset(blankRateForm);
+                  setRateModalOpen(true);
+                }}
+                type="button"
+              >
+                New Exchange Rate
+              </button>
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
@@ -636,9 +672,12 @@ export function CurrencyMasterPage() {
             </div>
           </section>
 
-          <section className="crm-panel">
+          {rateModalOpen ? (
+            <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
             <div className="crm-panel-header">
               <h3>Add Exchange Rate</h3>
+              <button className="crm-secondary-button" onClick={() => setRateModalOpen(false)} type="button">Close</button>
             </div>
             <form className="crm-form crm-two-col" onSubmit={onRateSubmit}>
               <label className="crm-field">
@@ -683,6 +722,8 @@ export function CurrencyMasterPage() {
               </button>
             </form>
           </section>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </div>

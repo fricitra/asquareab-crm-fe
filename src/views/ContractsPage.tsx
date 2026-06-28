@@ -208,6 +208,7 @@ export function ContractsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const contractForm = useForm<ContractFormValues>({
@@ -270,6 +271,7 @@ export function ContractsPage() {
         remarks: pickString(values.remarks)
       }),
     onSuccess: (contract) => {
+      setCreateOpen(false);
       refreshContract(contract, "Contract draft is ready.");
       contractForm.reset({ reservationId: "", contractValue: "", currencyCode: "USD", remarks: "" });
     },
@@ -386,6 +388,9 @@ export function ContractsPage() {
           <p className="crm-eyebrow">Contracts</p>
           <h2>Contract Workspace</h2>
         </div>
+        <button className="crm-primary-button" onClick={() => setCreateOpen(true)} type="button">
+          New Contract
+        </button>
       </section>
 
       <section className="crm-grid crm-metric-grid">
@@ -409,8 +414,13 @@ export function ContractsPage() {
 
       {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
 
-      <section className="crm-panel">
-        <h3>Create Contract</h3>
+      {createOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+      <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
+        <div className="crm-panel-header">
+          <h3>Create Contract</h3>
+          <button className="crm-secondary-button" onClick={() => setCreateOpen(false)} type="button">Close</button>
+        </div>
         <form className="crm-form crm-reservation-form" onSubmit={onContractSubmit}>
           <label className="crm-field">
             <span className="crm-label">Approved Reservation</span>
@@ -447,6 +457,8 @@ export function ContractsPage() {
           </button>
         </form>
       </section>
+        </div>
+      ) : null}
 
       <section className="crm-panel">
         <div className="crm-panel-header">

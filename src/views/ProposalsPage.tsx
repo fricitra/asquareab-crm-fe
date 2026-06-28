@@ -173,6 +173,7 @@ export function ProposalsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const proposalForm = useForm<ProposalFormValues>({
@@ -263,6 +264,7 @@ export function ProposalsPage() {
         remarks: pickString(values.remarks)
       }),
     onSuccess: (proposal) => {
+      setCreateOpen(false);
       proposalForm.reset({
         opportunityId: "",
         unitId: "",
@@ -319,6 +321,9 @@ export function ProposalsPage() {
           <p className="crm-eyebrow">Pricing</p>
           <h2>Proposal Workspace</h2>
         </div>
+        <button className="crm-primary-button" onClick={() => setCreateOpen(true)} type="button">
+          New Proposal
+        </button>
       </section>
 
       <section className="crm-grid crm-metric-grid">
@@ -342,8 +347,13 @@ export function ProposalsPage() {
 
       {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
 
-      <section className="crm-panel">
-        <h3>Create Proposal</h3>
+      {createOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+      <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
+        <div className="crm-panel-header">
+          <h3>Create Proposal</h3>
+          <button className="crm-secondary-button" onClick={() => setCreateOpen(false)} type="button">Close</button>
+        </div>
         <form className="crm-form crm-reservation-form" onSubmit={onProposalSubmit}>
           <label className="crm-field">
             <span className="crm-label">Opportunity</span>
@@ -440,6 +450,8 @@ export function ProposalsPage() {
           </div>
         </dl>
       </section>
+        </div>
+      ) : null}
 
       <section className="crm-panel">
         <div className="crm-panel-header">
