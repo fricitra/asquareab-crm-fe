@@ -30,26 +30,59 @@ export type ReferenceDataPayload = {
   remarks?: string;
 };
 
+export type ReferenceDataPagination = {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+export type ReferenceFamilyOption = {
+  referenceCategory: string;
+  level1Code: string;
+  level1Name: string;
+};
+
+export type ReferenceDataMetadata = {
+  stats: {
+    values: number;
+    categories: number;
+    families: number;
+    inactive: number;
+  };
+  categories: string[];
+  families: ReferenceFamilyOption[];
+};
+
 export async function listReferenceData(params?: {
   category?: string;
   level1?: string;
   search?: string;
+  page?: number;
+  pageSize?: number;
   activeOnly?: boolean;
 }) {
-  const response = await apiClient.get<{ items: ReferenceDataItem[] }>("/reference-data", {
+  const response = await apiClient.get<{ items: ReferenceDataItem[]; pagination: ReferenceDataPagination }>("/reference-data", {
     params: {
       category: params?.category || undefined,
       level1: params?.level1 || undefined,
       search: params?.search || undefined,
+      page: params?.page,
+      pageSize: params?.pageSize,
       activeOnly: params?.activeOnly === undefined ? undefined : String(params.activeOnly)
     }
   });
-  return response.data.items;
+  return response.data;
 }
 
 export async function getReferenceFamily(category: string, level1: string) {
   const response = await apiClient.get<{ items: ReferenceDataItem[] }>(`/reference-data/families/${category}/${level1}`);
   return response.data.items;
+}
+
+export async function getReferenceDataMetadata() {
+  const response = await apiClient.get<ReferenceDataMetadata>("/reference-data/metadata");
+  return response.data;
 }
 
 export async function createReferenceData(payload: ReferenceDataPayload) {

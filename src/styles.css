@@ -660,6 +660,14 @@ textarea {
   grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
 }
 
+.crm-unit-catalogue-grid {
+  grid-template-columns: minmax(0, 0.95fr) minmax(620px, 1.05fr);
+}
+
+.crm-unit-catalogue-panel {
+  min-width: 0;
+}
+
 .crm-currency-grid {
   grid-template-columns: minmax(720px, 1.15fr) minmax(420px, 0.85fr);
   max-width: 100%;
@@ -717,63 +725,61 @@ textarea {
   white-space: nowrap;
 }
 
-.crm-reference-grid {
-  grid-template-columns: minmax(760px, 1.2fr) minmax(420px, 0.8fr);
-  max-width: 100%;
-}
-
-.crm-reference-grid .crm-panel {
+.crm-reference-register-panel {
   min-width: 0;
 }
 
-.crm-reference-grid .crm-panel-header {
-  align-items: flex-start;
+.crm-reference-register-panel .crm-search-input {
+  width: min(100%, 420px);
 }
 
-.crm-reference-grid .crm-search-input {
-  width: min(100%, 340px);
-}
-
-.crm-reference-grid .crm-filter-row {
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+.crm-reference-filter-row {
+  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1fr) auto;
   align-items: end;
 }
 
-.crm-reference-grid .crm-table-wrap {
+.crm-reference-register-panel .crm-table-wrap {
   overflow-x: hidden;
 }
 
-.crm-reference-grid .crm-table {
+.crm-reference-table {
   min-width: 0;
   table-layout: fixed;
 }
 
-.crm-reference-grid .crm-table th:nth-child(1),
-.crm-reference-grid .crm-table td:nth-child(1) {
-  width: 28%;
+.crm-reference-table th:nth-child(1),
+.crm-reference-table td:nth-child(1) {
+  width: 15%;
 }
 
-.crm-reference-grid .crm-table th:nth-child(2),
-.crm-reference-grid .crm-table td:nth-child(2) {
+.crm-reference-table th:nth-child(2),
+.crm-reference-table td:nth-child(2) {
   width: 20%;
 }
 
-.crm-reference-grid .crm-table th:nth-child(3),
-.crm-reference-grid .crm-table td:nth-child(3) {
-  width: 28%;
+.crm-reference-table th:nth-child(3),
+.crm-reference-table td:nth-child(3) {
+  width: 17%;
 }
 
-.crm-reference-grid .crm-table th:nth-child(4),
-.crm-reference-grid .crm-table td:nth-child(4) {
-  width: 10%;
+.crm-reference-table th:nth-child(4),
+.crm-reference-table td:nth-child(4) {
+  width: 24%;
 }
 
-.crm-reference-grid .crm-table th:nth-child(5),
-.crm-reference-grid .crm-table td:nth-child(5) {
-  width: 14%;
+.crm-reference-table th:nth-child(5),
+.crm-reference-table td:nth-child(5) {
+  width: 8%;
 }
 
-.crm-reference-grid .crm-status-pill {
+.crm-reference-table th:nth-child(6),
+.crm-reference-table td:nth-child(6),
+.crm-reference-table th:nth-child(7),
+.crm-reference-table td:nth-child(7) {
+  width: 8%;
+}
+
+.crm-reference-table .crm-status-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -790,6 +796,17 @@ textarea {
   border: 1px solid #dce6ef;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.76);
+}
+
+.crm-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  margin: 16px 0;
+}
+
+.crm-subtabs .crm-tab-button {
+  min-width: auto;
 }
 
 .crm-tab-button {
@@ -878,8 +895,63 @@ textarea {
   border-top: 1px solid #dce6ef;
 }
 
+.crm-compact-form .crm-input {
+  min-height: 44px;
+  padding: 10px 14px;
+}
+
+.crm-compact-form .crm-textarea {
+  min-height: 82px;
+}
+
 .crm-compact-form h4 {
   margin: 0;
+}
+
+.crm-small-button {
+  min-height: 36px;
+  padding: 8px 14px;
+}
+
+.crm-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 18px;
+  border-top: 1px solid #dce6ef;
+  color: #58708a;
+  font-weight: 700;
+}
+
+.crm-pagination > div {
+  display: flex;
+  gap: 10px;
+}
+
+.crm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(8, 27, 45, 0.42);
+}
+
+.crm-modal {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid #c7d7e6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(25, 58, 91, 0.28);
+}
+
+.crm-reference-modal .crm-panel-header {
+  margin-bottom: 8px;
 }
 
 .crm-activity-list {
@@ -1064,6 +1136,39 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.crm-catalogue-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+
+.crm-catalogue-form .crm-form-wide {
+  grid-column: 1 / -1;
+}
+
+.crm-linked-module-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.crm-linked-module-grid article {
+  min-height: 104px;
+  padding: 14px;
+  border: 1px solid #dce6ef;
+  border-radius: 8px;
+  background: #f8fbfe;
+}
+
+.crm-linked-module-grid strong,
+.crm-linked-module-grid span {
+  display: block;
+}
+
+.crm-linked-module-grid span {
+  margin-top: 6px;
+  color: #5f758b;
+}
+
 .crm-muted {
   color: #58708a;
 }
@@ -1186,8 +1291,11 @@ textarea {
   .crm-lead-form,
   .crm-reservation-form,
   .crm-check-grid,
+  .crm-catalogue-form,
   .crm-detail-list,
+  .crm-linked-module-grid,
   .crm-next-action,
+  .crm-reference-filter-row,
   .crm-workflow-data,
   .crm-two-col,
   .crm-filter-row {
@@ -1236,5 +1344,20 @@ textarea {
 
   .crm-form-wide {
     grid-column: auto;
+  }
+
+  .crm-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .crm-pagination > div,
+  .crm-pagination .crm-secondary-button {
+    width: 100%;
+  }
+
+  .crm-modal-backdrop {
+    align-items: start;
+    padding: 16px;
   }
 }

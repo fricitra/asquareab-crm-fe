@@ -3,11 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import {
   createReferenceData,
+  getReferenceDataMetadata,
   listReferenceData,
   updateReferenceData,
   type ReferenceDataItem,
   type ReferenceDataPayload
 } from "../api/reference-data";
+
+type ReferenceModalMode = "value" | "category" | "group" | "edit" | null;
 
 type ReferenceFormValues = {
   referenceCategory: string;
@@ -20,6 +23,21 @@ type ReferenceFormValues = {
   status: "ACTIVE" | "INACTIVE";
   isActive: boolean;
   remarks: string;
+};
+
+const pageSize = 20;
+
+const blankForm: ReferenceFormValues = {
+  referenceCategory: "",
+  level1Code: "",
+  level1Name: "",
+  level2Code: "",
+  level2Name: "",
+  description: "",
+  sortOrder: "0",
+  status: "ACTIVE",
+  isActive: true,
+  remarks: ""
 };
 
 function pickString(value: string) {
@@ -61,18 +79,12 @@ function formValues(item: ReferenceDataItem): ReferenceFormValues {
   };
 }
 
-const blankForm: ReferenceFormValues = {
-  referenceCategory: "",
-  level1Code: "",
-  level1Name: "",
-  level2Code: "",
-  level2Name: "",
-  description: "",
-  sortOrder: "0",
-  status: "ACTIVE",
-  isActive: true,
-  remarks: ""
-};
+function modalTitle(mode: ReferenceModalMode) {
+  if (mode === "category") return "New Category";
+  if (mode === "group") return "New Group";
+  if (mode === "edit") return "Edit Reference Value";
+  return "New Reference Value";
+}
 
 export function ReferenceDataPage() {
   const queryClient = useQueryClient();
@@ -80,78 +92,95 @@ export function ReferenceDataPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [level1Filter, setLevel1Filter] = useState("");
   const [activeOnly, setActiveOnly] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [modalMode, setModalMode] = useState<ReferenceModalMode>(null);
+  const [editingItem, setEditingItem] = useState<ReferenceDataItem | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const form = useForm<ReferenceFormValues>({
-    defaultValues: blankForm
+  const form = useForm<ReferenceFormValues>({ defaultValues: blankForm });
+  const watchedCategory = form.watch("referenceCategory");
+  const watchedLevel1 = form.watch("level1Code");
+
+  const metadataQuery = useQuery({
+    queryKey: ["reference-data", "metadata"],
+    queryFn: getReferenceDataMetadata,
+    staleTime: 10_000
   });
 
   const referenceQuery = useQuery({
-    queryKey: ["reference-data", "management", search, categoryFilter, level1Filter, activeOnly],
+    queryKey: ["reference-data", "management", search, categoryFilter, level1Filter, activeOnly, page],
     queryFn: () =>
       listReferenceData({
         search,
         category: categoryFilter,
         level1: level1Filter,
-        activeOnly
+        activeOnly,
+        page,
+        pageSize
       }),
     staleTime: 10_000
   });
 
-  const rows = referenceQuery.data ?? [];
-  const selectedItem = rows.find((item) => item.id === selectedId) ?? null;
-  const categories = useMemo(() => Array.from(new Set(rows.map((item) => item.referenceCategory))).sort(), [rows]);
-  const level1Options = useMemo(
-    () =>
-      Array.from(
-        new Set(rows.filter((item) => !categoryFilter || item.referenceCategory === categoryFilter).map((item) => item.level1Code))
-      ).sort(),
-    [categoryFilter, rows]
+  const rows = referenceQuery.data?.items ?? [];
+  const pagination = referenceQuery.data?.pagination ?? { page, pageSize, totalItems: 0, totalPages: 1 };
+  const metadata = metadataQuery.data;
+  const categories = metadata?.categories ?? [];
+
+  const filterFamilies = useMemo(
+    () => (metadata?.families ?? []).filter((family) => !categoryFilter || family.referenceCategory === categoryFilter),
+    [categoryFilter, metadata?.families]
   );
-  const stats = useMemo(() => {
-    const families = new Set(rows.map((item) => `${item.referenceCategory}/${item.level1Code}`));
-    const active = rows.filter((item) => item.status === "ACTIVE" && item.isActive).length;
-    const inactive = rows.length - active;
-    return { values: rows.length, categories: categories.length, families: families.size, inactive };
-  }, [categories.length, rows]);
+
+  const modalFamilies = useMemo(
+    () => (metadata?.families ?? []).filter((family) => family.referenceCategory === watchedCategory),
+    [metadata?.families, watchedCategory]
+  );
 
   useEffect(() => {
-    if (selectedItem) {
-      form.reset(formValues(selectedItem));
+    const family = modalFamilies.find((item) => item.level1Code === watchedLevel1);
+    if (family && modalMode === "value") {
+      form.setValue("level1Name", family.level1Name);
     }
-  }, [form, selectedItem]);
+  }, [form, modalFamilies, modalMode, watchedLevel1]);
 
-  const refresh = (successMessage: string, item?: ReferenceDataItem) => {
+  const refresh = (successMessage: string) => {
     setMessage(successMessage);
-    if (item) setSelectedId(item.id);
+    setModalMode(null);
+    setEditingItem(null);
+    form.reset(blankForm);
     void queryClient.invalidateQueries({ queryKey: ["reference-data"] });
     void queryClient.invalidateQueries({ queryKey: ["reference"] });
   };
 
   const createMutation = useMutation({
     mutationFn: (values: ReferenceFormValues) => createReferenceData(payload(values)),
-    onSuccess: (item) => {
-      form.reset(formValues(item));
-      refresh("Reference value created.", item);
-    },
+    onSuccess: () => refresh("Reference value created."),
     onError: () => setMessage("Reference value could not be created. Check duplicate code and required fields.")
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, values }: { id: string; values: ReferenceFormValues }) => updateReferenceData(id, payload(values)),
-    onSuccess: (item) => refresh("Reference value updated.", item),
+    onSuccess: () => refresh("Reference value updated."),
     onError: () => setMessage("Reference value could not be updated.")
   });
 
+  const resetPaging = () => setPage(1);
+
+  const openModal = (mode: Exclude<ReferenceModalMode, null>, item?: ReferenceDataItem) => {
+    setMessage(null);
+    setModalMode(mode);
+    setEditingItem(item ?? null);
+    form.reset(item ? formValues(item) : blankForm);
+  };
+
   const onSubmit = form.handleSubmit((values) => {
-    if (!values.referenceCategory.trim() || !values.level1Code.trim() || !values.level2Code.trim() || !values.level2Name.trim()) {
-      setMessage("Category, group code, value code, and value name are required.");
+    if (!values.referenceCategory.trim() || !values.level1Code.trim() || !values.level1Name.trim() || !values.level2Code.trim() || !values.level2Name.trim()) {
+      setMessage("Category, group code, group name, value code, and value name are required.");
       return;
     }
 
-    if (selectedItem) {
-      updateMutation.mutate({ id: selectedItem.id, values });
+    if (modalMode === "edit" && editingItem) {
+      updateMutation.mutate({ id: editingItem.id, values });
       return;
     }
 
@@ -165,188 +194,268 @@ export function ReferenceDataPage() {
           <p className="crm-eyebrow">Administration</p>
           <h2>Reference Data Management</h2>
         </div>
+        <div className="crm-dashboard-actions">
+          <button className="crm-secondary-button" onClick={() => openModal("category")} type="button">
+            New Category
+          </button>
+          <button className="crm-secondary-button" onClick={() => openModal("group")} type="button">
+            New Group
+          </button>
+          <button className="crm-primary-button" onClick={() => openModal("value")} type="button">
+            New Reference Value
+          </button>
+        </div>
       </section>
 
       <section className="crm-grid crm-metric-grid">
         <article className="crm-card">
           <h3>Values</h3>
-          <div className="crm-kpi">{stats.values}</div>
+          <div className="crm-kpi">{metadata?.stats.values ?? 0}</div>
         </article>
         <article className="crm-card">
           <h3>Categories</h3>
-          <div className="crm-kpi">{stats.categories}</div>
+          <div className="crm-kpi">{metadata?.stats.categories ?? 0}</div>
         </article>
         <article className="crm-card">
           <h3>Families</h3>
-          <div className="crm-kpi">{stats.families}</div>
+          <div className="crm-kpi">{metadata?.stats.families ?? 0}</div>
         </article>
         <article className="crm-card">
           <h3>Inactive</h3>
-          <div className="crm-kpi">{stats.inactive}</div>
+          <div className="crm-kpi">{metadata?.stats.inactive ?? 0}</div>
         </article>
       </section>
 
-      {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
+      {message ? <div className={message.includes("could not") || message.includes("required") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
 
-      <section className="crm-action-grid crm-reference-grid">
-        <section className="crm-panel">
-          <div className="crm-panel-header">
-            <h3>Reference Register</h3>
-            <input
-              className="crm-input crm-search-input"
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search category, group, code, name"
-              value={search}
-            />
-          </div>
+      <section className="crm-panel crm-reference-register-panel">
+        <div className="crm-panel-header">
+          <h3>Reference Register</h3>
+          <input
+            className="crm-input crm-search-input"
+            onChange={(event) => {
+              setSearch(event.target.value);
+              resetPaging();
+            }}
+            placeholder="Search category, group, code, name"
+            value={search}
+          />
+        </div>
 
-          <div className="crm-filter-row">
-            <label className="crm-field">
-              <span className="crm-label">Category</span>
-              <select
-                className="crm-input"
-                onChange={(event) => {
-                  setCategoryFilter(event.target.value);
-                  setLevel1Filter("");
-                }}
-                value={categoryFilter}
-              >
-                <option value="">All categories</option>
-                {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Family</span>
-              <select className="crm-input" onChange={(event) => setLevel1Filter(event.target.value)} value={level1Filter}>
-                <option value="">All families</option>
-                {level1Options.map((level1) => (
-                  <option key={level1} value={level1}>
-                    {level1}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="crm-check-field">
-              <input checked={activeOnly} onChange={(event) => setActiveOnly(event.target.checked)} type="checkbox" />
-              <span>Active only</span>
-            </label>
-          </div>
-
-          <div className="crm-table-wrap">
-            <table className="crm-table">
-              <thead>
-                <tr>
-                  <th>Family</th>
-                  <th>Value</th>
-                  <th>Name</th>
-                  <th>Order</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((item) => (
-                  <tr className={selectedId === item.id ? "is-selected" : ""} key={item.id} onClick={() => setSelectedId(item.id)}>
-                    <td>
-                      <strong>{item.referenceCategory}</strong>
-                      <span>{item.level1Code}</span>
-                    </td>
-                    <td>{item.level2Code}</td>
-                    <td>{item.level2Name}</td>
-                    <td>{item.sortOrder}</td>
-                    <td>
-                      <span className={`crm-status-pill ${item.isActive && item.status === "ACTIVE" ? "crm-status-available" : "crm-status-cancelled"}`}>
-                        {item.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 ? (
-                  <tr>
-                    <td className="crm-empty-cell" colSpan={5}>
-                      No reference values found.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="crm-panel">
-          <div className="crm-panel-header">
-            <h3>{selectedItem ? "Edit Reference Value" : "New Reference Value"}</h3>
-            <button
-              className="crm-secondary-button"
-              onClick={() => {
-                setSelectedId(null);
-                form.reset(blankForm);
+        <div className="crm-filter-row crm-reference-filter-row">
+          <label className="crm-field">
+            <span className="crm-label">Category</span>
+            <select
+              className="crm-input"
+              onChange={(event) => {
+                setCategoryFilter(event.target.value);
+                setLevel1Filter("");
+                resetPaging();
               }}
-              type="button"
+              value={categoryFilter}
             >
-              New
+              <option value="">All categories</option>
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="crm-field">
+            <span className="crm-label">Group</span>
+            <select
+              className="crm-input"
+              onChange={(event) => {
+                setLevel1Filter(event.target.value);
+                resetPaging();
+              }}
+              value={level1Filter}
+            >
+              <option value="">All groups</option>
+              {filterFamilies.map((family) => (
+                <option key={`${family.referenceCategory}-${family.level1Code}`} value={family.level1Code}>
+                  {family.referenceCategory} / {family.level1Code}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="crm-check-field">
+            <input
+              checked={activeOnly}
+              onChange={(event) => {
+                setActiveOnly(event.target.checked);
+                resetPaging();
+              }}
+              type="checkbox"
+            />
+            <span>Active only</span>
+          </label>
+        </div>
+
+        <div className="crm-table-wrap">
+          <table className="crm-table crm-reference-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Group</th>
+                <th>Value Code</th>
+                <th>Value Name</th>
+                <th>Order</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.referenceCategory}</td>
+                  <td>
+                    <strong>{item.level1Code}</strong>
+                    <span>{item.level1Name}</span>
+                  </td>
+                  <td>{item.level2Code}</td>
+                  <td>{item.level2Name}</td>
+                  <td>{item.sortOrder}</td>
+                  <td>
+                    <span className={`crm-status-pill ${item.isActive && item.status === "ACTIVE" ? "crm-status-available" : "crm-status-cancelled"}`}>
+                      {item.status}
+                    </span>
+                  </td>
+                  <td>
+                    <button className="crm-secondary-button crm-small-button" onClick={() => openModal("edit", item)} type="button">
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="crm-empty-cell" colSpan={7}>
+                    No reference values found.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="crm-pagination">
+          <span>
+            Page {pagination.page} of {pagination.totalPages} · {pagination.totalItems} values
+          </span>
+          <div>
+            <button className="crm-secondary-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
+              Previous
+            </button>
+            <button className="crm-secondary-button" disabled={page >= pagination.totalPages} onClick={() => setPage((current) => current + 1)} type="button">
+              Next
             </button>
           </div>
-
-          <form className="crm-form" onSubmit={onSubmit}>
-            <div className="crm-two-col">
-              <label className="crm-field">
-                <span className="crm-label">Category</span>
-                <input className="crm-input" placeholder="INVENTORY" {...form.register("referenceCategory")} />
-              </label>
-              <label className="crm-field">
-                <span className="crm-label">Group Code</span>
-                <input className="crm-input" placeholder="UNIT_TYPE" {...form.register("level1Code")} />
-              </label>
-            </div>
-            <label className="crm-field">
-              <span className="crm-label">Group Name</span>
-              <input className="crm-input" placeholder="Unit Type" {...form.register("level1Name")} />
-            </label>
-            <div className="crm-two-col">
-              <label className="crm-field">
-                <span className="crm-label">Value Code</span>
-                <input className="crm-input" placeholder="APARTMENT" {...form.register("level2Code")} />
-              </label>
-              <label className="crm-field">
-                <span className="crm-label">Value Name</span>
-                <input className="crm-input" placeholder="Apartment" {...form.register("level2Name")} />
-              </label>
-            </div>
-            <div className="crm-two-col">
-              <label className="crm-field">
-                <span className="crm-label">Sort Order</span>
-                <input className="crm-input" {...form.register("sortOrder")} />
-              </label>
-              <label className="crm-field">
-                <span className="crm-label">Status</span>
-                <select className="crm-input" {...form.register("status")}>
-                  <option value="ACTIVE">Active</option>
-                  <option value="INACTIVE">Inactive</option>
-                </select>
-              </label>
-            </div>
-            <label className="crm-check-field">
-              <input type="checkbox" {...form.register("isActive")} />
-              <span>Available for application use</span>
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Description</span>
-              <textarea className="crm-input crm-textarea" {...form.register("description")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Remarks</span>
-              <textarea className="crm-input crm-textarea" {...form.register("remarks")} />
-            </label>
-            <button className="crm-primary-button" disabled={createMutation.isPending || updateMutation.isPending} type="submit">
-              {selectedItem ? "Update Reference Value" : "Create Reference Value"}
-            </button>
-          </form>
-        </section>
+        </div>
       </section>
+
+      {modalMode ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-reference-modal" role="dialog">
+            <div className="crm-panel-header">
+              <h3>{modalTitle(modalMode)}</h3>
+              <button
+                className="crm-secondary-button"
+                onClick={() => {
+                  setModalMode(null);
+                  setEditingItem(null);
+                  form.reset(blankForm);
+                }}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <form className="crm-form crm-compact-form" onSubmit={onSubmit}>
+              <div className="crm-two-col">
+                <label className="crm-field">
+                  <span className="crm-label">Category</span>
+                  {modalMode === "value" || modalMode === "group" ? (
+                    <select className="crm-input" {...form.register("referenceCategory")}>
+                      <option value="">Select category</option>
+                      {categories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input className="crm-input" placeholder="INVENTORY" {...form.register("referenceCategory")} />
+                  )}
+                </label>
+                <label className="crm-field">
+                  <span className="crm-label">Group Code</span>
+                  {modalMode === "value" ? (
+                    <select className="crm-input" {...form.register("level1Code")}>
+                      <option value="">Select group</option>
+                      {modalFamilies.map((family) => (
+                        <option key={family.level1Code} value={family.level1Code}>
+                          {family.level1Code} - {family.level1Name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input className="crm-input" placeholder="UNIT_TYPE" {...form.register("level1Code")} />
+                  )}
+                </label>
+              </div>
+
+              <label className="crm-field">
+                <span className="crm-label">Group Name</span>
+                <input className="crm-input" placeholder="Unit Type" readOnly={modalMode === "value"} {...form.register("level1Name")} />
+              </label>
+
+              <div className="crm-two-col">
+                <label className="crm-field">
+                  <span className="crm-label">Value Code</span>
+                  <input className="crm-input" placeholder="APARTMENT" {...form.register("level2Code")} />
+                </label>
+                <label className="crm-field">
+                  <span className="crm-label">Value Name</span>
+                  <input className="crm-input" placeholder="Apartment" {...form.register("level2Name")} />
+                </label>
+              </div>
+
+              <div className="crm-two-col">
+                <label className="crm-field">
+                  <span className="crm-label">Sort Order</span>
+                  <input className="crm-input" {...form.register("sortOrder")} />
+                </label>
+                <label className="crm-field">
+                  <span className="crm-label">Status</span>
+                  <select className="crm-input" {...form.register("status")}>
+                    <option value="ACTIVE">Active</option>
+                    <option value="INACTIVE">Inactive</option>
+                  </select>
+                </label>
+              </div>
+
+              <label className="crm-check-field">
+                <input type="checkbox" {...form.register("isActive")} />
+                <span>Available for application use</span>
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Description</span>
+                <textarea className="crm-input crm-textarea" {...form.register("description")} />
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Remarks</span>
+                <textarea className="crm-input crm-textarea" {...form.register("remarks")} />
+              </label>
+              <button className="crm-primary-button" disabled={createMutation.isPending || updateMutation.isPending} type="submit">
+                {modalMode === "edit" ? "Update Reference Value" : "Create Reference Value"}
+              </button>
+            </form>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
