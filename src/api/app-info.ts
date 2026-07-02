@@ -5,6 +5,7 @@ export type AppInfo = {
   service: string;
   status: string;
   version: string;
+  dbHost?: string;
 };
 
 export async function getAppInfo() {

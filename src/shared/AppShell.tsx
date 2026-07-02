@@ -45,6 +45,7 @@ export function AppShell() {
 
   const applicationName = appInfoQuery.data?.application ?? "ASQUARE CRM";
   const version = appInfoQuery.data?.version ?? "v1.0.0";
+  const dbHost = appInfoQuery.data?.dbHost;
   const signedInName = user?.fullName ?? user?.username ?? "CRM User";
   const roleName = user?.roles?.find((role) => role.isPrimary)?.name ?? user?.roles?.[0]?.name ?? "CRM User";
 
@@ -80,6 +81,12 @@ export function AppShell() {
             </section>
           ))}
         </nav>
+        <footer className="crm-sidebar-footer">
+          <a href="https://asquareab.com/" target="_blank" rel="noreferrer">
+            https://asquareab.com/
+          </a>
+          {dbHost ? <span>DB: {dbHost}</span> : null}
+        </footer>
       </aside>
 
       <main className="crm-content">

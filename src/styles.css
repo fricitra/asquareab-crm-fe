@@ -332,7 +332,7 @@ textarea {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto minmax(260px, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 18px;
   margin: -32px -32px 28px;
@@ -362,9 +362,11 @@ textarea {
 
 .crm-title-banner p {
   margin: 0;
+  min-width: 0;
   color: rgba(255, 255, 255, 0.9);
   line-height: 1.4;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .crm-title-actions {
@@ -431,16 +433,39 @@ textarea {
 
 .crm-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 18px;
 }
 
+.crm-grid > *,
+.crm-workspace > *,
+.crm-lead-layout > *,
+.crm-action-grid > *,
+.crm-dashboard-grid > *,
+.crm-two-col > *,
+.crm-filter-row > *,
+.crm-reference-filter-row > *,
+.crm-inventory-grid > *,
+.crm-unit-catalogue-grid > *,
+.crm-currency-grid > *,
+.crm-next-action > *,
+.crm-linked-module-grid > *,
+.crm-unit-view-grid > *,
+.crm-lead-form > *,
+.crm-reservation-form > *,
+.crm-catalogue-form > *,
+.crm-check-grid > * {
+  min-width: 0;
+}
+
 .crm-card {
+  min-width: 0;
   padding: 22px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(196, 210, 224, 0.8);
   box-shadow: 0 14px 34px rgba(22, 48, 74, 0.08);
+  overflow-wrap: anywhere;
 }
 
 .crm-card h3,
@@ -458,6 +483,8 @@ textarea {
   font-size: 2rem;
   font-weight: 800;
   color: #193a5b;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .crm-section {
@@ -500,11 +527,13 @@ textarea {
 }
 
 .crm-panel {
+  min-width: 0;
   padding: 22px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(196, 210, 224, 0.8);
   box-shadow: 0 14px 34px rgba(22, 48, 74, 0.08);
+  overflow-wrap: anywhere;
 }
 
 .crm-search-input {
@@ -748,11 +777,11 @@ textarea {
 }
 
 .crm-inventory-grid {
-  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 0.65fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
 }
 
 .crm-unit-catalogue-grid {
-  grid-template-columns: minmax(0, 0.95fr) minmax(620px, 1.05fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
 }
 
 .crm-unit-catalogue-panel {
@@ -922,7 +951,7 @@ textarea {
 }
 
 .crm-currency-grid {
-  grid-template-columns: minmax(720px, 1.15fr) minmax(420px, 0.85fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
   max-width: 100%;
 }
 
@@ -1557,6 +1586,28 @@ textarea {
   background: #173450;
   color: #fff;
   border-right: 1px solid rgba(15, 123, 105, 0.7);
+  display: flex;
+  flex-direction: column;
+}
+
+.crm-reference-shell .crm-sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.crm-reference-shell .crm-sidebar-footer a {
+  color: #9edccf;
+  word-break: break-all;
+}
+
+.crm-reference-shell .crm-sidebar-footer a:hover {
+  text-decoration: underline;
 }
 
 .crm-reference-shell .crm-sidebar .crm-eyebrow {
@@ -1624,8 +1675,9 @@ textarea {
 }
 
 .crm-reference-shell .crm-title-banner {
-  grid-template-columns: minmax(180px, auto) minmax(240px, 1fr) auto auto;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto auto;
   min-height: 76px;
+  top: -20px;
   margin: -20px -20px 26px;
   padding: 14px 22px;
   border-bottom: 7px solid #173450;
@@ -1690,7 +1742,7 @@ textarea {
 }
 
 .crm-reference-shell .crm-metric-grid {
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 18px;
 }
 
@@ -1713,9 +1765,12 @@ textarea {
 .crm-reference-shell .crm-metric-grid .crm-card .crm-kpi {
   align-self: center;
   justify-self: center;
+  max-width: 100%;
   color: #193a5b;
-  font-size: 2.3rem;
-  line-height: 1;
+  font-size: clamp(1.4rem, 1rem + 1.6vw, 2.3rem);
+  line-height: 1.05;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .crm-reference-shell .crm-metric-grid .crm-card p {
@@ -1886,6 +1941,34 @@ textarea {
 
 .crm-reference-shell .crm-lead-detail-wide {
   min-height: 0;
+}
+
+@media (max-width: 1200px) {
+  .crm-reservation-form {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .crm-lead-form,
+  .crm-catalogue-form,
+  .crm-unit-detail-modal .crm-catalogue-form,
+  .crm-unit-view-grid,
+  .crm-lead-detail-wide .crm-detail-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .crm-lead-layout,
+  .crm-inventory-grid,
+  .crm-unit-catalogue-grid,
+  .crm-currency-grid,
+  .crm-next-action,
+  .crm-dashboard-activity article,
+  .crm-unit-detail-modal .crm-unit-builder {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-detail-panel {
+    position: static;
+  }
 }
 
 @media (max-width: 960px) {
