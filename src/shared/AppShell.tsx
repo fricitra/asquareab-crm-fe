@@ -49,7 +49,7 @@ export function AppShell() {
   const roleName = user?.roles?.find((role) => role.isPrimary)?.name ?? user?.roles?.[0]?.name ?? "CRM User";
 
   return (
-    <div className="crm-shell">
+    <div className="crm-shell crm-reference-shell">
       <aside className="crm-sidebar">
         <p className="crm-eyebrow">Asquare CRM</p>
         <h1 className="crm-sidebar-title">Sales Workspace</h1>

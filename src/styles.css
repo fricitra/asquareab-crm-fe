@@ -1547,7 +1547,371 @@ textarea {
   accent-color: #193a5b;
 }
 
+.crm-shell.crm-reference-shell {
+  grid-template-columns: 240px minmax(0, 1fr);
+  background: #eef3f7;
+}
+
+.crm-reference-shell .crm-sidebar {
+  padding: 0;
+  background: #173450;
+  color: #fff;
+  border-right: 1px solid rgba(15, 123, 105, 0.7);
+}
+
+.crm-reference-shell .crm-sidebar .crm-eyebrow {
+  margin: 0;
+  padding: 22px 18px 4px;
+  color: #9edccf;
+  font-size: 0.75rem;
+  letter-spacing: 0;
+}
+
+.crm-reference-shell .crm-sidebar-title {
+  margin: 0;
+  padding: 0 18px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
+.crm-reference-shell .crm-sidebar-text {
+  display: none;
+}
+
+.crm-reference-shell .crm-nav {
+  gap: 0;
+}
+
+.crm-reference-shell .crm-nav-group {
+  gap: 0;
+  padding: 0;
+}
+
+.crm-reference-shell .crm-nav-group + .crm-nav-group {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.crm-reference-shell .crm-nav-group-label {
+  margin: 0;
+  padding: 14px 18px 8px;
+  color: #c8d8e6;
+  font-size: 0.72rem;
+  letter-spacing: 0;
+}
+
+.crm-reference-shell .crm-nav-link {
+  min-height: 46px;
+  padding: 13px 18px;
+  border-radius: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 650;
+}
+
+.crm-reference-shell .crm-nav-link.active {
+  background: #0f7b69;
+  color: #fff;
+  box-shadow: inset 5px 0 0 #f3f6fb;
+}
+
+.crm-reference-shell .crm-content {
+  padding: 20px;
+  background: #eef3f7;
+}
+
+.crm-reference-shell .crm-title-banner {
+  grid-template-columns: minmax(180px, auto) minmax(240px, 1fr) auto auto;
+  min-height: 76px;
+  margin: -20px -20px 26px;
+  padding: 14px 22px;
+  border-bottom: 7px solid #173450;
+  background: linear-gradient(90deg, #123f68 0%, #0f7b69 100%);
+  box-shadow: 0 10px 18px rgba(22, 48, 74, 0.14);
+}
+
+.crm-reference-shell .crm-title-banner p {
+  font-size: 0.9rem;
+}
+
+.crm-reference-shell .crm-title-brand {
+  min-width: 0;
+}
+
+.crm-reference-shell .crm-title-brand strong {
+  font-size: 1rem;
+}
+
+.crm-reference-shell .crm-title-actions {
+  gap: 8px;
+}
+
+.crm-reference-shell .crm-status-pill,
+.crm-reference-shell .crm-role-pill,
+.crm-reference-shell .crm-user-chip,
+.crm-reference-shell .crm-banner-button {
+  border-radius: 2px;
+}
+
+.crm-reference-shell .crm-workspace {
+  gap: 18px;
+}
+
+.crm-reference-shell .crm-module-header {
+  align-items: end;
+  padding: 0 0 2px;
+}
+
+.crm-reference-shell .crm-module-header h2 {
+  font-size: 1.45rem;
+}
+
+.crm-reference-shell .crm-module-header .crm-eyebrow {
+  margin-bottom: 6px;
+  color: #0f7b69;
+  font-size: 0.75rem;
+  letter-spacing: 0;
+}
+
+.crm-reference-shell .crm-dashboard-actions {
+  gap: 8px;
+}
+
+.crm-reference-shell .crm-primary-button,
+.crm-reference-shell .crm-secondary-button {
+  border-radius: 2px;
+}
+
+.crm-reference-shell .crm-secondary-button {
+  background: #fff;
+}
+
+.crm-reference-shell .crm-metric-grid {
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 18px;
+}
+
+.crm-reference-shell .crm-metric-grid .crm-card {
+  display: grid;
+  min-height: 124px;
+  padding: 12px 16px;
+  border: 1px solid #c6d7e6;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.crm-reference-shell .crm-metric-grid .crm-card h3 {
+  margin: 0;
+  color: #0f7b69;
+  font-size: 0.95rem;
+}
+
+.crm-reference-shell .crm-metric-grid .crm-card .crm-kpi {
+  align-self: center;
+  justify-self: center;
+  color: #193a5b;
+  font-size: 2.3rem;
+  line-height: 1;
+}
+
+.crm-reference-shell .crm-metric-grid .crm-card p {
+  align-self: end;
+  min-height: 0;
+  color: #52677b;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.crm-reference-shell .crm-panel {
+  border: 1px solid #ccd9e5;
+  border-radius: 0;
+  background: #f7f9fc;
+  box-shadow: none;
+}
+
+.crm-reference-shell .crm-panel-header h3,
+.crm-reference-shell .crm-panel > h3 {
+  color: #173450;
+  font-size: 1.05rem;
+}
+
+.crm-reference-shell .crm-table-wrap,
+.crm-reference-shell .crm-dashboard-record-list {
+  margin-top: 14px;
+  border: 1px solid #c8d6e4;
+  background: #e6ebf1;
+}
+
+.crm-reference-shell .crm-table {
+  min-width: 980px;
+}
+
+.crm-reference-shell .crm-leads-record-grid .crm-table {
+  min-width: 1120px;
+}
+
+.crm-reference-shell .crm-table th {
+  padding: 11px 12px;
+  border-bottom: 0;
+  background: #173450;
+  color: #fff;
+  font-size: 0.82rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.crm-reference-shell .crm-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #d0dbe6;
+  color: #1e4668;
+  font-size: 0.92rem;
+}
+
+.crm-reference-shell .crm-table tbody tr {
+  background: #f8fafc;
+}
+
+.crm-reference-shell .crm-table tbody tr:nth-child(even) {
+  background: #eef3f7;
+}
+
+.crm-reference-shell .crm-table tbody tr:hover,
+.crm-reference-shell .crm-table tbody tr.is-selected {
+  background: #dfeff6;
+}
+
+.crm-reference-shell .crm-table td span,
+.crm-reference-shell .crm-detail-title span,
+.crm-reference-shell .crm-muted-text {
+  color: #52677b;
+}
+
+.crm-reference-shell .crm-dashboard-record-list {
+  overflow-x: auto;
+}
+
+.crm-reference-shell .crm-dashboard-record-head,
+.crm-reference-shell .crm-dashboard-record-list article {
+  display: grid;
+  grid-template-columns: 76px minmax(220px, 0.75fr) minmax(360px, 1.25fr);
+  min-width: 760px;
+}
+
+.crm-reference-shell .crm-dashboard-record-head {
+  background: #173450;
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.crm-reference-shell .crm-dashboard-record-head span {
+  padding: 11px 12px;
+}
+
+.crm-reference-shell .crm-dashboard-record-list article {
+  gap: 0;
+  padding: 0;
+  border-bottom: 1px solid #d0dbe6;
+  background: #f8fafc;
+}
+
+.crm-reference-shell .crm-dashboard-record-list article:nth-child(odd) {
+  background: #eef3f7;
+}
+
+.crm-reference-shell .crm-dashboard-record-list article > span,
+.crm-reference-shell .crm-dashboard-record-list article > div {
+  padding: 10px 12px;
+}
+
+.crm-reference-shell .crm-dashboard-record-list article:last-child {
+  border-bottom: 0;
+}
+
+.crm-reference-shell .crm-dashboard-grid,
+.crm-reference-shell .crm-action-grid {
+  gap: 18px;
+}
+
+.crm-reference-shell .crm-dashboard-queue-item {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.crm-reference-shell .crm-detail-list dt {
+  color: #52677b;
+  letter-spacing: 0;
+}
+
+.crm-reference-shell .crm-input {
+  border-radius: 2px;
+}
+
+.crm-reference-shell .crm-unit-register-table,
+.crm-reference-shell .crm-reference-table,
+.crm-reference-shell .crm-currency-grid .crm-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.crm-reference-shell .crm-reference-register-panel .crm-table-wrap,
+.crm-reference-shell .crm-currency-grid .crm-table-wrap {
+  overflow-x: hidden;
+}
+
+.crm-reference-shell .crm-tabs,
+.crm-reference-shell .crm-tab-button,
+.crm-reference-shell .crm-workflow,
+.crm-reference-shell .crm-workflow-step,
+.crm-reference-shell .crm-linked-module-grid article,
+.crm-reference-shell .crm-next-action,
+.crm-reference-shell .crm-modal,
+.crm-reference-shell .crm-admin-role-option,
+.crm-reference-shell .crm-unit-section-button,
+.crm-reference-shell .crm-unit-section-heading,
+.crm-reference-shell .crm-unit-section-panel .crm-form,
+.crm-reference-shell .crm-unit-section-panel .crm-linked-module-grid,
+.crm-reference-shell .crm-unit-view-grid {
+  border-radius: 0;
+}
+
+.crm-reference-shell .crm-modal {
+  box-shadow: 0 22px 56px rgba(25, 58, 91, 0.24);
+}
+
+.crm-reference-shell .crm-lead-detail-wide {
+  min-height: 0;
+}
+
 @media (max-width: 960px) {
+  .crm-shell.crm-reference-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-reference-shell .crm-title-banner {
+    grid-template-columns: 1fr;
+    margin: -20px -20px 22px;
+    padding: 16px 20px;
+  }
+
+  .crm-reference-shell .crm-title-banner p {
+    text-align: left;
+  }
+
+  .crm-reference-shell .crm-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-reference-shell .crm-dashboard-record-head,
+  .crm-reference-shell .crm-dashboard-record-list article {
+    min-width: 700px;
+  }
+
   body {
     overflow: auto;
   }

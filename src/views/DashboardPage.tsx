@@ -49,9 +49,15 @@ function ActivityList({ items }: { items: DashboardActivity[] }) {
   }
 
   return (
-    <div className="crm-dashboard-activity">
-      {items.map((item) => (
+    <div className="crm-dashboard-activity crm-dashboard-record-list">
+      <div className="crm-dashboard-record-head">
+        <span>S.No.</span>
+        <span>Record</span>
+        <span>Details</span>
+      </div>
+      {items.map((item, index) => (
         <article key={`${item.activityType}-${item.id}`}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
           <div>
             <strong>{item.documentNo}</strong>
             <span>{item.activityType} · {item.statusName ?? item.statusCode ?? "-"}</span>
@@ -103,7 +109,7 @@ export function DashboardPage() {
   const metrics = summary.metrics;
 
   return (
-    <div className="crm-workspace">
+    <div className="crm-workspace crm-dashboard-workspace">
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Executive Dashboard</p>

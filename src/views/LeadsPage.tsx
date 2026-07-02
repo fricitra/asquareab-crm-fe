@@ -456,7 +456,7 @@ export function LeadsPage() {
   const leadRows = leadsQuery.data?.items ?? [];
 
   return (
-    <div className="crm-workspace">
+    <div className="crm-workspace crm-leads-workspace">
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Lead Management</p>
@@ -499,42 +499,48 @@ export function LeadsPage() {
           />
         </div>
 
-        <div className="crm-table-wrap">
+        <div className="crm-table-wrap crm-leads-record-grid">
           <table className="crm-table">
             <thead>
               <tr>
-                <th>Lead</th>
+                <th>S.No.</th>
+                <th>Lead No.</th>
                 <th>Contact</th>
+                <th>Source</th>
                 <th>Status</th>
                 <th>Rating</th>
                 <th>Score</th>
                 <th>Captured</th>
+                <th>Assigned</th>
               </tr>
             </thead>
             <tbody>
-              {leadRows.map((lead: Lead) => (
+              {leadRows.map((lead: Lead, index) => (
                 <tr
                   className={selectedLeadId === lead.id ? "is-selected" : ""}
                   key={lead.id}
                   onClick={() => setSelectedLeadId(lead.id)}
                 >
+                  <td>{String(index + 1).padStart(2, "0")}</td>
                   <td>
                     <strong>{lead.leadNo}</strong>
-                    <span>{lead.leadSource.name ?? "No source"}</span>
+                    <span>{lead.leadTitle ?? "Lead"}</span>
                   </td>
                   <td>
                     <strong>{lead.contactName ?? "Unnamed lead"}</strong>
                     <span>{lead.mobileNo ?? lead.email ?? "-"}</span>
                   </td>
+                  <td>{lead.leadSource.name ?? "-"}</td>
                   <td>{lead.leadStatus.name ?? "-"}</td>
                   <td>{lead.leadRating.name ?? "-"}</td>
                   <td>{lead.scoreTotal ?? "-"}</td>
                   <td>{formatDate(lead.capturedAt)}</td>
+                  <td>{lead.assignedToUser.name ?? "Unassigned"}</td>
                 </tr>
               ))}
               {leadRows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={6}>
+                  <td className="crm-empty-cell" colSpan={9}>
                     No leads found.
                   </td>
                 </tr>
