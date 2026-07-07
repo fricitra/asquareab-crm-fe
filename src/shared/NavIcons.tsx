@@ -16,6 +16,7 @@ export type NavIconName =
   | "admin"
   | "currencies"
   | "reference-data"
+  | "activity"
   | "chevron";
 
 const iconPaths: Record<NavIconName, ReactNode> = {
@@ -107,6 +108,14 @@ const iconPaths: Record<NavIconName, ReactNode> = {
       <ellipse cx="12" cy="6" rx="7" ry="3" />
       <path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
       <path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+    </>
+  ),
+  activity: (
+    <>
+      <path d="M4 6h16" />
+      <path d="M4 12h10" />
+      <path d="M4 18h14" />
+      <circle cx="19" cy="12" r="2" />
     </>
   ),
   chevron: <path d="M8 10l4 4 4-4" />

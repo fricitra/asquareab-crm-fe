@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 type NamedLink = {
   id: string | null;
@@ -83,12 +84,12 @@ export async function convertLeadToOpportunity(leadId: string, payload: ConvertL
   return response.data;
 }
 
-export async function listOpportunities(search?: string) {
+export async function listOpportunities(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Opportunity[];
     pagination: { limit: number; offset: number; total: number };
   }>("/opportunities", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }

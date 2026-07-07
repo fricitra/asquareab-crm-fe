@@ -22,6 +22,8 @@ import {
   type CreateRolePayload,
   type RolePermission
 } from "../api/admin";
+import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 
 type AdminTab = "users" | "roles";
 
@@ -144,6 +146,9 @@ export function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
   const [userSearch, setUserSearch] = useState("");
   const [roleSearch, setRoleSearch] = useState("");
+  const [userPage, setUserPage] = useState(1);
+  const [rolePage, setRolePage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
@@ -158,15 +163,33 @@ export function AdminPage() {
   const roleForm = useForm<RoleFormValues>({ defaultValues: blankRoleForm });
 
   const usersQuery = useQuery({
-    queryKey: ["admin", "users", userSearch],
-    queryFn: () => listAdminUsers(userSearch),
+    queryKey: ["admin", "users", userSearch, userPage],
+    queryFn: () =>
+      listAdminUsers({
+        search: userSearch || undefined,
+        limit: pageSize,
+        offset: (userPage - 1) * pageSize
+      }),
     staleTime: 10_000
   });
   const rolesQuery = useQuery({
-    queryKey: ["admin", "roles", roleSearch],
-    queryFn: () => listAdminRoles(roleSearch),
+    queryKey: ["admin", "roles", roleSearch, rolePage],
+    queryFn: () =>
+      listAdminRoles({
+        search: roleSearch || undefined,
+        limit: pageSize,
+        offset: (rolePage - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setUserPage(1);
+  }, [userSearch]);
+
+  useEffect(() => {
+    setRolePage(1);
+  }, [roleSearch]);
   const permissionsQuery = useQuery({
     queryKey: ["admin", "permissions"],
     queryFn: listPermissions,
@@ -444,6 +467,13 @@ export function AdminPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={userPage}
+              pageSize={pageSize}
+              total={usersQuery.data?.pagination.total ?? 0}
+              itemLabel="users"
+              onPageChange={setUserPage}
+            />
           </section>
 
           {userModalOpen ? (
@@ -651,6 +681,13 @@ export function AdminPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={rolePage}
+              pageSize={pageSize}
+              total={rolesQuery.data?.pagination.total ?? 0}
+              itemLabel="roles"
+              onPageChange={setRolePage}
+            />
           </section>
 
           {roleModalOpen ? (

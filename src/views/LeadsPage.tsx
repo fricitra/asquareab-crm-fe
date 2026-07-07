@@ -1,11 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { assignLead, createLead, getLead, listLeads, qualifyLead, type CreateLeadPayload, type Lead, type QualifyLeadPayload } from "../api/leads";
 import { convertLeadToOpportunity } from "../api/opportunities";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
+import { DEFAULT_LIST_PAGE_SIZE, getRowSerialNumber } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { formatMoneyRange } from "../lib/format-money";
 import { useAuthStore } from "../store/auth-store";
 
 type LeadFormValues = {
@@ -99,9 +103,6 @@ function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 }
 
-function moneyRange(min: number | null, max: number | null, currency: string | null) {
-  return `${min ?? "-"} - ${max ?? "-"} ${currency ?? ""}`.trim();
-}
 
 function leadNextAction(lead: Lead) {
   if (!lead.assignedAt && !lead.assignedToUser.id) {
@@ -135,7 +136,10 @@ function leadNextAction(lead: Lead) {
   };
 }
 
-function leadWorkflowSteps(lead: Lead): WorkflowStep[] {
+function leadWorkflowSteps(
+  lead: Lead,
+  formatBudget: (min: number | null, max: number | null, currency?: string | null) => string
+): WorkflowStep[] {
   const isAssigned = Boolean(lead.assignedAt || lead.assignedToUser.id);
   const isQualified = Boolean(lead.qualifiedAt);
   const isConverted = Boolean(lead.convertedAt);
@@ -156,7 +160,7 @@ function leadWorkflowSteps(lead: Lead): WorkflowStep[] {
         { label: "Email", value: lead.email },
         { label: "Source", value: lead.leadSource.name },
         { label: "Channel", value: lead.captureChannel.name },
-        { label: "Budget", value: moneyRange(lead.budgetMin, lead.budgetMax, lead.preferredCurrencyCode) },
+        { label: "Budget", value: formatBudget(lead.budgetMin, lead.budgetMax, lead.preferredCurrencyCode) },
         { label: "Project", value: lead.preferredProjectCode },
         { label: "Unit Type", value: lead.preferredUnitType.name }
       ]
@@ -298,10 +302,16 @@ function SelectField<TFormValues extends FieldValues>({
 }
 
 export function LeadsPage() {
+  const { formatInBase, baseCurrency, toBase } = useMoneyFormatter();
+
+  const formatLeadBudget = (min: number | null, max: number | null, currency?: string | null) =>
+    formatMoneyRange(toBase(min, currency), toBase(max, currency), baseCurrency);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -315,10 +325,19 @@ export function LeadsPage() {
   const channelsQuery = useQuery({ queryKey: ["reference", "COMMUNICATION", "CHANNEL"], queryFn: () => getReferenceFamily("COMMUNICATION", "CHANNEL") });
 
   const leadsQuery = useQuery({
-    queryKey: ["leads", search],
-    queryFn: () => listLeads(search),
+    queryKey: ["leads", search, page],
+    queryFn: () =>
+      listLeads({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const leadDetailQuery = useQuery({
     queryKey: ["lead", selectedLeadId],
@@ -340,7 +359,7 @@ export function LeadsPage() {
       fundingSourceRefId: "",
       budgetMin: "",
       budgetMax: "",
-      preferredCurrencyCode: "AED",
+      preferredCurrencyCode: baseCurrency,
       preferredProjectCode: "",
       preferredLocationCode: "",
       preferredUnitTypeRefId: "",
@@ -454,6 +473,7 @@ export function LeadsPage() {
   });
 
   const leadRows = leadsQuery.data?.items ?? [];
+  const leadPagination = leadsQuery.data?.pagination ?? { limit: pageSize, offset: 0, total: 0 };
 
   return (
     <div className="crm-workspace crm-leads-workspace">
@@ -521,7 +541,7 @@ export function LeadsPage() {
                   key={lead.id}
                   onClick={() => setSelectedLeadId(lead.id)}
                 >
-                  <td>{String(index + 1).padStart(2, "0")}</td>
+                  <td>{String(getRowSerialNumber(page, pageSize, index)).padStart(2, "0")}</td>
                   <td>
                     <strong>{lead.leadNo}</strong>
                     <span>{lead.leadTitle ?? "Lead"}</span>
@@ -548,6 +568,13 @@ export function LeadsPage() {
             </tbody>
           </table>
         </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={leadPagination.total}
+          itemLabel="leads"
+          onPageChange={setPage}
+        />
       </section>
 
       <section className="crm-panel crm-lead-detail-wide">
@@ -561,7 +588,7 @@ export function LeadsPage() {
                 </div>
                 <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
               </div>
-              <WorkflowTracker steps={leadWorkflowSteps(selectedLead)} />
+              <WorkflowTracker steps={leadWorkflowSteps(selectedLead, formatLeadBudget)} />
               <dl className="crm-detail-list">
                 <div>
                   <dt>Phone</dt>
@@ -574,7 +601,7 @@ export function LeadsPage() {
                 <div>
                   <dt>Budget</dt>
                   <dd>
-                    {selectedLead.budgetMin ?? "-"} - {selectedLead.budgetMax ?? "-"} {selectedLead.preferredCurrencyCode ?? ""}
+                    {formatLeadBudget(selectedLead.budgetMin, selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}
                   </dd>
                 </div>
                 <div>

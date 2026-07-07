@@ -45,7 +45,8 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Admin", to: "/admin", icon: "admin" },
       { label: "Currencies", to: "/currencies", icon: "currencies" },
-      { label: "Reference Data", to: "/reference-data", icon: "reference-data" }
+      { label: "Reference Data", to: "/reference-data", icon: "reference-data" },
+      { label: "Recent Activity", to: "/recent-activity", icon: "activity" }
     ]
   }
 ];
@@ -171,7 +172,6 @@ export function AppShell() {
           </div>
           <p>Property sales workspace for leads, opportunities, proposals, reservations, contracts, and customer lifecycle operations.</p>
           <div className="crm-title-actions">
-            <span className="crm-status-pill">CRM available</span>
             <span className="crm-role-pill">{roleName}</span>
             <span className="crm-user-chip" title={signedInName}>
               {signedInName.slice(0, 1).toUpperCase()}

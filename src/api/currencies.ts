@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 export type Currency = {
   id: string;
@@ -121,6 +122,8 @@ export async function listCurrencies(filters?: {
   paymentAllowed?: boolean;
   reportingOnly?: boolean;
   activeOnly?: boolean;
+  limit?: number;
+  offset?: number;
 }) {
   const response = await apiClient.get<{
     items: Currency[];
@@ -144,6 +147,21 @@ export async function updateCurrency(id: string, payload: Partial<CurrencyPayloa
   return response.data;
 }
 
+export type CurrencyDisplayContext = {
+  baseCurrencyCode: string;
+  localCurrencyCode: string;
+  defaultContractCurrencyCode: string;
+  paymentCurrencyCodes: string[];
+  reportingCurrencyCodes: string[];
+  ratesToBase: Record<string, number>;
+  symbols: Record<string, { symbol: string | null; decimalPlaces: number }>;
+};
+
+export async function getCurrencyDisplayContext() {
+  const response = await apiClient.get<CurrencyDisplayContext>("/currencies/display-context");
+  return response.data;
+}
+
 export async function getCurrencyPolicy() {
   const response = await apiClient.get<CurrencyPolicy>("/currencies/policy");
   return response.data;
@@ -154,7 +172,13 @@ export async function updateCurrencyPolicy(payload: CurrencyPolicyPayload) {
   return response.data;
 }
 
-export async function listExchangeRates(filters?: { fromCurrencyCode?: string; toCurrencyCode?: string; activeOnly?: boolean }) {
+export async function listExchangeRates(filters?: {
+  fromCurrencyCode?: string;
+  toCurrencyCode?: string;
+  activeOnly?: boolean;
+  limit?: number;
+  offset?: number;
+}) {
   const response = await apiClient.get<{
     items: ExchangeRate[];
     pagination: { limit: number; offset: number; total: number };

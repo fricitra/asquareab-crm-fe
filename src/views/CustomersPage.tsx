@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import {
@@ -14,6 +14,9 @@ import {
   type Customer
 } from "../api/customers";
 import { getReferenceFamily } from "../api/reference-data";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 
 type CustomerTab = "customers" | "brokers";
 
@@ -109,7 +112,7 @@ const blankCustomer: CustomerFormValues = {
   buyerTypeRefId: "",
   fundingSourceRefId: "",
   preferredCommunicationRefId: "",
-  defaultCurrencyCode: "USD",
+  defaultCurrencyCode: "KES",
   defaultProjectCode: "PEX-WATAMU",
   remarks: ""
 };
@@ -131,8 +134,12 @@ const blankBroker: BrokerFormValues = {
 
 export function CustomersPage() {
   const queryClient = useQueryClient();
+  const { baseCurrency } = useMoneyFormatter();
   const [activeTab, setActiveTab] = useState<CustomerTab>("customers");
   const [search, setSearch] = useState("");
+  const [customerPage, setCustomerPage] = useState(1);
+  const [brokerPage, setBrokerPage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedBrokerId, setSelectedBrokerId] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
@@ -143,15 +150,30 @@ export function CustomersPage() {
   const brokerForm = useForm<BrokerFormValues>({ defaultValues: blankBroker });
 
   const customersQuery = useQuery({
-    queryKey: ["customers", search],
-    queryFn: () => listCustomers(search),
+    queryKey: ["customers", search, customerPage],
+    queryFn: () =>
+      listCustomers({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (customerPage - 1) * pageSize
+      }),
     staleTime: 10_000
   });
   const brokersQuery = useQuery({
-    queryKey: ["brokers", search],
-    queryFn: () => listBrokers(search),
+    queryKey: ["brokers", search, brokerPage],
+    queryFn: () =>
+      listBrokers({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (brokerPage - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setCustomerPage(1);
+    setBrokerPage(1);
+  }, [search]);
   const selectedCustomerQuery = useQuery({
     queryKey: ["customer", selectedCustomerId],
     queryFn: () => getCustomer(selectedCustomerId ?? ""),
@@ -254,7 +276,7 @@ export function CustomersPage() {
       buyerTypeRefId: customer.buyerType.id ?? "",
       fundingSourceRefId: customer.fundingSource.id ?? "",
       preferredCommunicationRefId: customer.preferredCommunication.id ?? "",
-      defaultCurrencyCode: customer.defaultCurrencyCode ?? "USD",
+      defaultCurrencyCode: customer.defaultCurrencyCode ?? baseCurrency,
       defaultProjectCode: customer.defaultProjectCode ?? "PEX-WATAMU",
       remarks: customer.remarks ?? ""
     });
@@ -392,6 +414,13 @@ export function CustomersPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={customerPage}
+              pageSize={pageSize}
+              total={customersQuery.data?.pagination.total ?? 0}
+              itemLabel="customers"
+              onPageChange={setCustomerPage}
+            />
           </section>
 
           {customerModalOpen ? (
@@ -549,6 +578,13 @@ export function CustomersPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={brokerPage}
+              pageSize={pageSize}
+              total={brokersQuery.data?.pagination.total ?? 0}
+              itemLabel="brokers"
+              onPageChange={setBrokerPage}
+            />
           </section>
 
           {brokerModalOpen ? (

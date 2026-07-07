@@ -16,6 +16,8 @@ import {
   type CurrencyPolicyPayload,
   type ExchangeRatePayload
 } from "../api/currencies";
+import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 
 type CurrencyTab = "currencies" | "policy" | "rates";
 
@@ -207,8 +209,11 @@ function ratePayload(values: RateFormValues): ExchangeRatePayload {
 
 export function CurrencyMasterPage() {
   const queryClient = useQueryClient();
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [activeTab, setActiveTab] = useState<CurrencyTab>("currencies");
   const [search, setSearch] = useState("");
+  const [currencyPage, setCurrencyPage] = useState(1);
+  const [ratePage, setRatePage] = useState(1);
   const [selectedCurrencyId, setSelectedCurrencyId] = useState<string | null>(null);
   const [currencyModalOpen, setCurrencyModalOpen] = useState(false);
   const [rateModalOpen, setRateModalOpen] = useState(false);
@@ -235,9 +240,20 @@ export function CurrencyMasterPage() {
   const rateForm = useForm<RateFormValues>({ defaultValues: blankRateForm });
 
   const currenciesQuery = useQuery({
-    queryKey: ["currencies", search],
-    queryFn: () => listCurrencies({ search, activeOnly: false }),
+    queryKey: ["currencies", search, currencyPage],
+    queryFn: () =>
+      listCurrencies({
+        search: search || undefined,
+        activeOnly: false,
+        limit: pageSize,
+        offset: (currencyPage - 1) * pageSize
+      }),
     staleTime: 10_000
+  });
+  const currencyOptionsQuery = useQuery({
+    queryKey: ["currencies", "dropdown-options"],
+    queryFn: () => listCurrencies({ activeOnly: true, limit: DROPDOWN_LIST_LIMIT }),
+    staleTime: 60_000
   });
   const selectedCurrencyQuery = useQuery({
     queryKey: ["currencies", "detail", selectedCurrencyId],
@@ -250,23 +266,34 @@ export function CurrencyMasterPage() {
     staleTime: 10_000
   });
   const ratesQuery = useQuery({
-    queryKey: ["currencies", "rates"],
-    queryFn: () => listExchangeRates({ activeOnly: false }),
+    queryKey: ["currencies", "rates", ratePage],
+    queryFn: () =>
+      listExchangeRates({
+        activeOnly: false,
+        limit: pageSize,
+        offset: (ratePage - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setCurrencyPage(1);
+  }, [search]);
 
   const rows = currenciesQuery.data?.items ?? [];
   const selectedCurrency = selectedCurrencyQuery.data ?? null;
   const rates = ratesQuery.data?.items ?? [];
-  const currencyOptions = rows.filter((currency) => currency.status === "ACTIVE" && currency.isActive);
+  const currencyOptions = currencyOptionsQuery.data?.items ?? [];
+  const currencyTotal = currenciesQuery.data?.pagination.total ?? 0;
+  const rateTotal = ratesQuery.data?.pagination.total ?? 0;
 
   const stats = useMemo(() => {
     const active = rows.filter((currency) => currency.status === "ACTIVE" && currency.isActive).length;
     const payment = rows.filter((currency) => currency.isPaymentCurrencyAllowed).length;
     const dropdown = rows.filter((currency) => currency.isCrmDropdownAllowed).length;
     const contract = rows.filter((currency) => currency.isContractCurrencyAllowed).map((currency) => currency.currencyCode).join(", ") || "-";
-    return { total: rows.length, active, payment, dropdown, contract };
-  }, [rows]);
+    return { total: currencyTotal, active, payment, dropdown, contract };
+  }, [rows, currencyTotal]);
 
   useEffect(() => {
     if (selectedCurrency) {
@@ -458,6 +485,13 @@ export function CurrencyMasterPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={currencyPage}
+              pageSize={pageSize}
+              total={currencyTotal}
+              itemLabel="currencies"
+              onPageChange={setCurrencyPage}
+            />
           </section>
 
           {currencyModalOpen ? (
@@ -670,6 +704,13 @@ export function CurrencyMasterPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={ratePage}
+              pageSize={pageSize}
+              total={rateTotal}
+              itemLabel="exchange rates"
+              onPageChange={setRatePage}
+            />
           </section>
 
           {rateModalOpen ? (

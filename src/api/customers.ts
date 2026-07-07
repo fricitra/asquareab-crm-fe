@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 type NamedLink = {
   id: string | null;
@@ -85,12 +86,12 @@ export type BrokerPayload = {
   remarks?: string;
 };
 
-export async function listCustomers(search?: string) {
+export async function listCustomers(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Customer[];
     pagination: { limit: number; offset: number; total: number };
   }>("/customers", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }
@@ -110,12 +111,12 @@ export async function updateCustomer(id: string, payload: Partial<CustomerPayloa
   return response.data;
 }
 
-export async function listBrokers(search?: string) {
+export async function listBrokers(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Broker[];
     pagination: { limit: number; offset: number; total: number };
   }>("/brokers", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }

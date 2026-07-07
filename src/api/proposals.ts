@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 type NamedLink = {
   id: string | null;
@@ -135,12 +136,12 @@ export type CreateProposalPayload = {
   remarks?: string;
 };
 
-export async function listProposals(search?: string) {
+export async function listProposals(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Proposal[];
     pagination: { limit: number; offset: number; total: number };
   }>("/proposals", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }

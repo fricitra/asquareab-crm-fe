@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 export type AdminUserRole = {
   id: string;
@@ -101,12 +102,12 @@ export type SetRolePermissionsPayload = {
   }>;
 };
 
-export async function listAdminUsers(search?: string) {
+export async function listAdminUsers(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: AdminUser[];
     pagination: { limit: number; offset: number; total: number };
   }>("/admin/users", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }
@@ -146,12 +147,12 @@ export async function setUserRoles(id: string, payload: SetUserRolesPayload) {
   return response.data;
 }
 
-export async function listAdminRoles(search?: string) {
+export async function listAdminRoles(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: AdminRole[];
     pagination: { limit: number; offset: number; total: number };
   }>("/admin/roles", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }

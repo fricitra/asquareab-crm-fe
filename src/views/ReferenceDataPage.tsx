@@ -9,6 +9,8 @@ import {
   type ReferenceDataItem,
   type ReferenceDataPayload
 } from "../api/reference-data";
+import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 
 type ReferenceModalMode = "value" | "category" | "group" | "edit" | null;
 
@@ -25,7 +27,7 @@ type ReferenceFormValues = {
   remarks: string;
 };
 
-const pageSize = 20;
+const pageSize = DEFAULT_LIST_PAGE_SIZE;
 
 const blankForm: ReferenceFormValues = {
   referenceCategory: "",
@@ -340,19 +342,13 @@ export function ReferenceDataPage() {
           </table>
         </div>
 
-        <div className="crm-pagination">
-          <span>
-            Page {pagination.page} of {pagination.totalPages} · {pagination.totalItems} values
-          </span>
-          <div>
-            <button className="crm-secondary-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
-              Previous
-            </button>
-            <button className="crm-secondary-button" disabled={page >= pagination.totalPages} onClick={() => setPage((current) => current + 1)} type="button">
-              Next
-            </button>
-          </div>
-        </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={pagination.totalItems}
+          itemLabel="values"
+          onPageChange={setPage}
+        />
       </section>
 
       {modalMode ? (

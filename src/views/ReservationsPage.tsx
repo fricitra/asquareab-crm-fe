@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { listCurrencies } from "../api/currencies";
@@ -12,6 +12,9 @@ import {
   listReservations,
   type Reservation
 } from "../api/reservations";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type ReservationFormValues = {
@@ -35,12 +38,10 @@ function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(value)) : "-";
 }
 
-function money(value: number | null, currencyCode: string | null) {
-  if (value === null) return "-";
-  return `${value.toLocaleString()} ${currencyCode ?? ""}`.trim();
-}
-
-function reservationWorkflowSteps(reservation: Reservation): WorkflowStep[] {
+function reservationWorkflowSteps(
+  reservation: Reservation,
+  formatValue: (value: number | null, currencyCode?: string | null) => string
+): WorkflowStep[] {
   const isCancelled = reservation.reservationStatus.code === "CANCELLED";
   const isApproved = reservation.reservationStatus.code === "APPROVED";
   return [
@@ -58,7 +59,7 @@ function reservationWorkflowSteps(reservation: Reservation): WorkflowStep[] {
         { label: "Opportunity", value: reservation.opportunity.opportunityNo },
         { label: "Project", value: reservation.project.projectCode },
         { label: "Unit", value: reservation.unit.unitCode },
-        { label: "Amount", value: money(reservation.reservationAmount, reservation.currencyCode) },
+        { label: "Amount", value: formatValue(reservation.reservationAmount, reservation.currencyCode) },
         { label: "Expiry", value: reservation.expiryDate }
       ]
     },
@@ -93,7 +94,10 @@ function reservationWorkflowSteps(reservation: Reservation): WorkflowStep[] {
 
 export function ReservationsPage() {
   const queryClient = useQueryClient();
+  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -103,17 +107,26 @@ export function ReservationsPage() {
       opportunityId: "",
       unitId: "",
       reservationAmount: "",
-      currencyCode: "USD",
+      currencyCode: defaultContractCurrency,
       expiryDate: "",
       remarks: ""
     }
   });
 
   const reservationsQuery = useQuery({
-    queryKey: ["reservations", search],
-    queryFn: () => listReservations(search),
+    queryKey: ["reservations", search, page],
+    queryFn: () =>
+      listReservations({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const reservationDetailQuery = useQuery({
     queryKey: ["reservation", selectedReservationId],
@@ -123,13 +136,13 @@ export function ReservationsPage() {
 
   const opportunitiesQuery = useQuery({
     queryKey: ["opportunities", "reservation-select"],
-    queryFn: () => listOpportunities(),
+    queryFn: () => listOpportunities({ limit: DROPDOWN_LIST_LIMIT }),
     staleTime: 10_000
   });
 
   const unitsQuery = useQuery({
     queryKey: ["inventory", "units", "reservation-select"],
-    queryFn: () => listUnits(),
+    queryFn: () => listUnits({ limit: DROPDOWN_LIST_LIMIT }),
     staleTime: 10_000
   });
   const currenciesQuery = useQuery({
@@ -152,7 +165,7 @@ export function ReservationsPage() {
       setMessage("Reservation created.");
       setCreateOpen(false);
       setSelectedReservationId(reservation.id);
-      reservationForm.reset({ opportunityId: "", unitId: "", reservationAmount: "", currencyCode: "USD", expiryDate: "", remarks: "" });
+      reservationForm.reset({ opportunityId: "", unitId: "", reservationAmount: "", currencyCode: defaultContractCurrency, expiryDate: "", remarks: "" });
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
     },
@@ -190,9 +203,12 @@ export function ReservationsPage() {
     const total = reservationsQuery.data?.pagination.total ?? 0;
     const active = reservationRows.filter((reservation) => reservation.isActive).length;
     const cancelled = reservationRows.filter((reservation) => reservation.reservationStatus.code === "CANCELLED").length;
-    const amount = reservationRows.reduce((sum, reservation) => sum + (reservation.reservationAmount ?? 0), 0);
+    const amount = reservationRows.reduce(
+      (sum, reservation) => sum + toBase(reservation.reservationAmount, reservation.currencyCode),
+      0
+    );
     return { total, active, cancelled, amount };
-  }, [reservationRows, reservationsQuery.data?.pagination.total]);
+  }, [reservationRows, reservationsQuery.data?.pagination.total, toBase]);
 
   const onReservationSubmit = reservationForm.handleSubmit((values) => {
     if (!values.opportunityId || !values.unitId) {
@@ -229,7 +245,7 @@ export function ReservationsPage() {
         </article>
         <article className="crm-card">
           <h3>Amount</h3>
-          <div className="crm-kpi">{stats.amount.toLocaleString()}</div>
+          <div className="crm-kpi">{formatInBase(stats.amount)}</div>
         </article>
       </section>
 
@@ -260,7 +276,7 @@ export function ReservationsPage() {
               <option value="">Select unit</option>
               {availableUnits.map((unit) => (
                 <option key={unit.id} value={unit.id}>
-                  {unit.unitCode} - {money(unit.basePrice, unit.currencyCode)}
+                  {unit.unitCode} - {formatInBase(unit.basePrice, unit.currencyCode)}
                 </option>
               ))}
             </select>
@@ -338,7 +354,7 @@ export function ReservationsPage() {
                     </span>
                   </td>
                   <td>{formatDate(reservation.reservationDate)}</td>
-                  <td>{money(reservation.reservationAmount, reservation.currencyCode)}</td>
+                  <td>{formatInBase(reservation.reservationAmount, reservation.currencyCode)}</td>
                 </tr>
               ))}
               {reservationRows.length === 0 ? (
@@ -351,6 +367,13 @@ export function ReservationsPage() {
             </tbody>
           </table>
         </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={reservationsQuery.data?.pagination.total ?? 0}
+          itemLabel="reservations"
+          onPageChange={setPage}
+        />
       </section>
 
       <section className="crm-panel crm-lead-detail-wide">
@@ -366,7 +389,7 @@ export function ReservationsPage() {
                 {selectedReservation.reservationStatus.name ?? selectedReservation.status}
               </span>
             </div>
-            <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation)} />
+            <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation, formatInBase)} />
 
             <dl className="crm-detail-list">
               <div>
@@ -383,7 +406,7 @@ export function ReservationsPage() {
               </div>
               <div>
                 <dt>Amount</dt>
-                <dd>{money(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
+                <dd>{formatInBase(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
               </div>
               <div>
                 <dt>Date</dt>

@@ -20,6 +20,9 @@ import {
   type Unit
 } from "../api/inventory";
 import { listCurrencies } from "../api/currencies";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 
 type InventoryTab = "projects" | "units" | "availability";
@@ -221,11 +224,6 @@ function pickNumber(value: string) {
   return normalized === "" ? undefined : Number(normalized);
 }
 
-function money(value: number | null, currencyCode: string | null) {
-  if (value === null) return "-";
-  return `${value.toLocaleString()} ${currencyCode ?? ""}`.trim();
-}
-
 function area(value: number | null) {
   return value === null ? "-" : value.toLocaleString();
 }
@@ -322,11 +320,13 @@ function CheckField({ label, name, register }: { label: string; name: string; re
 
 export function InventoryPage() {
   const queryClient = useQueryClient();
-  const unitPageSize = 20;
+  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [activeTab, setActiveTab] = useState<InventoryTab>("projects");
   const [unitDetailTab, setUnitDetailTab] = useState<UnitDetailTab>("identification");
   const [unitEditMode, setUnitEditMode] = useState(false);
   const [search, setSearch] = useState("");
+  const [projectPage, setProjectPage] = useState(1);
   const [unitPage, setUnitPage] = useState(1);
   const [unitModalOpen, setUnitModalOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -334,7 +334,7 @@ export function InventoryPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const projectForm = useForm<ProjectFormValues>({
-    defaultValues: { projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "USD", description: "", remarks: "" }
+    defaultValues: { projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: defaultContractCurrency, description: "", remarks: "" }
   });
   const unitForm = useForm<UnitFormValues>({
     defaultValues: {
@@ -353,7 +353,7 @@ export function InventoryPage() {
       grossArea: "",
       netArea: "",
       basePrice: "",
-      currencyCode: "USD",
+      currencyCode: defaultContractCurrency,
       availabilityStatusRefId: "",
       remarks: ""
     }
@@ -424,12 +424,31 @@ export function InventoryPage() {
     }
   });
 
-  const projectsQuery = useQuery({ queryKey: ["inventory", "projects", search], queryFn: () => listProjects(search), staleTime: 10_000 });
-  const unitsQuery = useQuery({
-    queryKey: ["inventory", "units", search, unitPage],
-    queryFn: () => listUnits({ search, limit: unitPageSize, offset: (unitPage - 1) * unitPageSize }),
+  const projectsQuery = useQuery({
+    queryKey: ["inventory", "projects", search, projectPage],
+    queryFn: () =>
+      listProjects({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (projectPage - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+  const unitsQuery = useQuery({
+    queryKey: ["inventory", "units", search, unitPage],
+    queryFn: () =>
+      listUnits({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (unitPage - 1) * pageSize
+      }),
+    staleTime: 10_000
+  });
+
+  useEffect(() => {
+    setProjectPage(1);
+    setUnitPage(1);
+  }, [search]);
   const selectedProjectQuery = useQuery({ queryKey: ["inventory", "project", selectedProjectId], queryFn: () => getProject(selectedProjectId ?? ""), enabled: Boolean(selectedProjectId) });
   const selectedUnitQuery = useQuery({ queryKey: ["inventory", "unit", selectedUnitId], queryFn: () => getUnit(selectedUnitId ?? ""), enabled: Boolean(selectedUnitId) });
   const unitTypesQuery = useQuery({ queryKey: ["reference", "inventory-unit-types"], queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE"), staleTime: 60_000 });
@@ -451,8 +470,7 @@ export function InventoryPage() {
 
   const projectRows = projectsQuery.data?.items ?? [];
   const unitRows = unitsQuery.data?.items ?? [];
-  const unitPagination = unitsQuery.data?.pagination ?? { limit: unitPageSize, offset: 0, total: 0 };
-  const unitTotalPages = Math.max(1, Math.ceil(unitPagination.total / unitPageSize));
+  const unitPagination = unitsQuery.data?.pagination ?? { limit: pageSize, offset: 0, total: 0 };
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProject = selectedProjectQuery.data;
   const selectedUnit = selectedUnitQuery.data;
@@ -462,9 +480,9 @@ export function InventoryPage() {
     const totalUnits = unitsQuery.data?.pagination.total ?? 0;
     const available = unitRows.filter((unit) => unit.availabilityStatus.code === "AVAILABLE").length;
     const reserved = unitRows.filter((unit) => unit.availabilityStatus.code === "RESERVED").length;
-    const value = unitRows.reduce((sum, unit) => sum + (unit.basePrice ?? 0), 0);
+    const value = unitRows.reduce((sum, unit) => sum + toBase(unit.basePrice, unit.currencyCode), 0);
     return { projects: projectsQuery.data?.pagination.total ?? 0, units: totalUnits, available, reserved, value };
-  }, [projectsQuery.data?.pagination.total, unitRows, unitsQuery.data?.pagination.total]);
+  }, [projectsQuery.data?.pagination.total, unitRows, unitsQuery.data?.pagination.total, toBase]);
 
   const refreshInventory = (successMessage: string) => {
     setMessage(successMessage);
@@ -582,7 +600,7 @@ export function InventoryPage() {
     mutationFn: (values: ProjectFormValues) => createProject(projectPayload(values)),
     onSuccess: (project) => {
       setSelectedProjectId(project.id);
-      projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "USD", description: "", remarks: "" });
+      projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: defaultContractCurrency, description: "", remarks: "" });
       refreshInventory("Project saved.");
     },
     onError: () => setMessage("Project could not be saved. Check code and required fields.")
@@ -734,7 +752,7 @@ export function InventoryPage() {
       grossArea: "",
       netArea: "",
       basePrice: "",
-      currencyCode: "USD",
+      currencyCode: defaultContractCurrency,
       availabilityStatusRefId: "",
       remarks: ""
     });
@@ -764,7 +782,7 @@ export function InventoryPage() {
           <div><dt>Type</dt><dd>{linkName(selectedUnit.unitType)} / {linkName(selectedUnit.unitSubType)}</dd></div>
           <div><dt>Stack</dt><dd>{linkName(selectedUnit.stack)}</dd></div>
           <div><dt>Area</dt><dd>{area(selectedUnit.netArea)} net / {area(selectedUnit.grossArea)} gross</dd></div>
-          <div><dt>Price</dt><dd>{money(selectedUnit.basePrice, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Price</dt><dd>{formatInBase(selectedUnit.basePrice, selectedUnit.currencyCode)}</dd></div>
           <div><dt>Status</dt><dd>{linkName(selectedUnit.availabilityStatus)}</dd></div>
         </dl>
       );
@@ -850,12 +868,12 @@ export function InventoryPage() {
         <dl className="crm-detail-list crm-unit-view-grid">
           <div><dt>Launch Date</dt><dd>{sales?.launchDate ?? "-"}</dd></div>
           <div><dt>Sales Release Date</dt><dd>{sales?.salesReleaseDate ?? "-"}</dd></div>
-          <div><dt>Base Selling Price</dt><dd>{money(sales?.baseSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
-          <div><dt>Premium Amount</dt><dd>{money(sales?.premiumAmount ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Base Selling Price</dt><dd>{formatInBase(sales?.baseSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Premium Amount</dt><dd>{formatInBase(sales?.premiumAmount ?? null, selectedUnit.currencyCode)}</dd></div>
           <div><dt>Discount Ceiling %</dt><dd>{sales?.discountCeilingPct ?? "-"}</dd></div>
-          <div><dt>Approved Selling Price</dt><dd>{money(sales?.approvedSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
-          <div><dt>Reservation Amount</dt><dd>{money(sales?.reservationAmount ?? null, selectedUnit.currencyCode)}</dd></div>
-          <div><dt>Current Market Value</dt><dd>{money(sales?.currentMarketValue ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Approved Selling Price</dt><dd>{formatInBase(sales?.approvedSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Reservation Amount</dt><dd>{formatInBase(sales?.reservationAmount ?? null, selectedUnit.currencyCode)}</dd></div>
+          <div><dt>Current Market Value</dt><dd>{formatInBase(sales?.currentMarketValue ?? null, selectedUnit.currencyCode)}</dd></div>
           <div><dt>Sales Status</dt><dd>{sales?.salesStatus?.name ?? "-"}</dd></div>
           <div><dt>Remarks</dt><dd>{sales?.remarks ?? "-"}</dd></div>
         </dl>
@@ -887,7 +905,7 @@ export function InventoryPage() {
         <article className="crm-card"><h3>Projects</h3><div className="crm-kpi">{stats.projects}</div></article>
         <article className="crm-card"><h3>Units</h3><div className="crm-kpi">{stats.units}</div></article>
         <article className="crm-card"><h3>Available</h3><div className="crm-kpi">{stats.available}</div></article>
-        <article className="crm-card"><h3>Value</h3><div className="crm-kpi">{stats.value.toLocaleString()}</div></article>
+        <article className="crm-card"><h3>Value</h3><div className="crm-kpi">{formatInBase(stats.value)}</div></article>
       </section>
 
       {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
@@ -926,6 +944,13 @@ export function InventoryPage() {
                 </tbody>
               </table>
             </div>
+            <ListPagination
+              page={projectPage}
+              pageSize={pageSize}
+              total={projectsQuery.data?.pagination.total ?? 0}
+              itemLabel="projects"
+              onPageChange={setProjectPage}
+            />
           </section>
 
           <form className="crm-panel crm-form" onSubmit={onProjectSubmit}>
@@ -933,7 +958,7 @@ export function InventoryPage() {
               <h3>{selectedProject ? "Edit Project" : "Create Project"}</h3>
               <button className="crm-secondary-button crm-fit-button" onClick={() => {
                 setSelectedProjectId(null);
-                projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: "USD", description: "", remarks: "" });
+                projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: defaultContractCurrency, description: "", remarks: "" });
               }} type="button">New</button>
             </div>
             <label className="crm-field"><span className="crm-label">Project Code</span><input className="crm-input" {...projectForm.register("projectCode")} /></label>
@@ -989,7 +1014,7 @@ export function InventoryPage() {
                       <td><strong>{unit.project.projectCode}</strong><span>{unit.project.name ?? "-"}</span></td>
                       <td>{unit.unitType.name ?? "-"}</td>
                       <td>{area(unit.netArea)}</td>
-                      <td>{money(unit.basePrice, unit.currencyCode)}</td>
+                      <td>{formatInBase(unit.basePrice, unit.currencyCode)}</td>
                       <td><span className={`crm-status-pill crm-status-${unit.availabilityStatus.code?.toLowerCase() ?? "default"}`}>{unit.availabilityStatus.name ?? unit.status}</span></td>
                       <td>
                         <button className="crm-secondary-button crm-small-button" onClick={() => loadUnitForm(unit)} type="button">
@@ -1008,19 +1033,13 @@ export function InventoryPage() {
                 </tbody>
               </table>
             </div>
-            <div className="crm-pagination">
-              <span>
-                Page {unitPage} of {unitTotalPages} · {unitPagination.total} units
-              </span>
-              <div>
-                <button className="crm-secondary-button" disabled={unitPage <= 1} onClick={() => setUnitPage((current) => Math.max(1, current - 1))} type="button">
-                  Previous
-                </button>
-                <button className="crm-secondary-button" disabled={unitPage >= unitTotalPages} onClick={() => setUnitPage((current) => current + 1)} type="button">
-                  Next
-                </button>
-              </div>
-            </div>
+            <ListPagination
+              page={unitPage}
+              pageSize={pageSize}
+              total={unitPagination.total}
+              itemLabel="units"
+              onPageChange={setUnitPage}
+            />
           </section>
 
           {unitModalOpen ? (

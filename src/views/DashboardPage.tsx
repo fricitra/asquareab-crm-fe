@@ -2,23 +2,22 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { getApiErrorMessage } from "../api/auth";
-import { getDashboardSummary, type DashboardActivity, type DashboardBreakdown } from "../api/dashboard";
+import { getDashboardSummary, type DashboardBreakdown } from "../api/dashboard";
+import { useCurrencyContext } from "../hooks/useCurrencyContext";
+import { formatAmount } from "../lib/format-money";
 import { useAuthStore } from "../store/auth-store";
-
-function money(value: number, currencyCode = "USD") {
-  return `${value.toLocaleString()} ${currencyCode}`;
-}
 
 function percent(value: number) {
   return `${Math.round(value)}%`;
 }
 
-function dateTime(value: string | null) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString();
-}
-
-function StatusBars({ items, valueMode = false }: { items: DashboardBreakdown[]; valueMode?: boolean }) {
+function StatusBars({
+  items,
+  valueMode = false
+}: {
+  items: DashboardBreakdown[];
+  valueMode?: boolean;
+}) {
   const max = Math.max(...items.map((item) => (valueMode ? item.value : item.count)), 1);
 
   if (!items.length) {
@@ -33,7 +32,7 @@ function StatusBars({ items, valueMode = false }: { items: DashboardBreakdown[];
           <div className="crm-dashboard-bar" key={`${item.code}-${item.name}`}>
             <div className="crm-dashboard-bar-label">
               <strong>{item.name ?? item.code ?? "-"}</strong>
-              <span>{valueMode ? money(current) : current.toLocaleString()}</span>
+              <span>{valueMode ? formatAmount(current) : current.toLocaleString()}</span>
             </div>
             <div className="crm-dashboard-bar-track">
               <span style={{ width: `${Math.max((current / max) * 100, current > 0 ? 8 : 0)}%` }} />
@@ -45,37 +44,9 @@ function StatusBars({ items, valueMode = false }: { items: DashboardBreakdown[];
   );
 }
 
-function ActivityList({ items }: { items: DashboardActivity[] }) {
-  if (!items.length) {
-    return <p className="crm-muted-text">No recent activity yet.</p>;
-  }
-
-  return (
-    <div className="crm-dashboard-activity crm-dashboard-record-list">
-      <div className="crm-dashboard-record-head">
-        <span>S.No.</span>
-        <span>Record</span>
-        <span>Details</span>
-      </div>
-      {items.map((item, index) => (
-        <article key={`${item.activityType}-${item.id}`}>
-          <span>{String(index + 1).padStart(2, "0")}</span>
-          <div>
-            <strong>{item.documentNo}</strong>
-            <span>{item.activityType} · {item.statusName ?? item.statusCode ?? "-"}</span>
-          </div>
-          <div>
-            <span>{item.title ?? "-"}</span>
-            <span>{item.amount ? money(item.amount, item.currencyCode ?? "USD") : dateTime(item.happenedAt)}</span>
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
 export function DashboardPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
+  const currencyQuery = useCurrencyContext();
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", "summary"],
     queryFn: getDashboardSummary,
@@ -123,13 +94,27 @@ export function DashboardPage() {
   }
 
   const metrics = summary.metrics;
+  const displayCurrency = summary.displayCurrency ?? currencyQuery.data?.baseCurrencyCode ?? "KES";
+  const currencySymbol = currencyQuery.data?.symbols?.[displayCurrency]?.symbol ?? displayCurrency;
 
   return (
     <div className="crm-workspace crm-dashboard-workspace">
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Executive Dashboard</p>
-          <h2>Sales Operations Overview</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Sales Operations Overview</h2>
+            <div
+              className="crm-dashboard-currency-badge"
+              title={`All monetary values are shown in ${displayCurrency}`}
+            >
+              <span aria-hidden className="crm-currency-badge-icon">
+                {currencySymbol}
+              </span>
+              <span className="crm-currency-badge-label">Base currency</span>
+              <strong className="crm-currency-badge-code">{displayCurrency}</strong>
+            </div>
+          </div>
         </div>
         <div className="crm-dashboard-actions">
           <Link className="crm-secondary-button" to="/leads">Leads</Link>
@@ -142,7 +127,7 @@ export function DashboardPage() {
       <section className="crm-grid crm-metric-grid">
         <article className="crm-card crm-dashboard-kpi">
           <h3>Pipeline Value</h3>
-          <div className="crm-kpi">{money(metrics.pipelineValue)}</div>
+          <div className="crm-kpi">{formatAmount(metrics.pipelineValue)}</div>
           <p>{metrics.openOpportunities} open opportunities · {percent(metrics.avgProbability)} average probability</p>
         </article>
         <article className="crm-card crm-dashboard-kpi">
@@ -157,7 +142,7 @@ export function DashboardPage() {
         </article>
         <article className="crm-card crm-dashboard-kpi">
           <h3>Contract Value</h3>
-          <div className="crm-kpi">{money(metrics.contractValue)}</div>
+          <div className="crm-kpi">{formatAmount(metrics.contractValue)}</div>
           <p>{metrics.signedContracts} signed · {metrics.erpHandedOff} ERP handed off</p>
         </article>
       </section>
@@ -175,7 +160,7 @@ export function DashboardPage() {
         </article>
         <article className="crm-card crm-dashboard-kpi">
           <h3>Discount Exposure</h3>
-          <div className="crm-kpi">{money(metrics.discountExposure)}</div>
+          <div className="crm-kpi">{formatAmount(metrics.discountExposure)}</div>
           <p>Total discount amount across active proposals</p>
         </article>
         <article className="crm-card crm-dashboard-kpi">
@@ -253,14 +238,6 @@ export function DashboardPage() {
             <div><dt>Signed</dt><dd>{metrics.signedContracts}</dd></div>
           </dl>
         </section>
-      </section>
-
-      <section className="crm-panel">
-        <div className="crm-panel-header">
-          <h3>Recent Activity</h3>
-          <span className="crm-muted-text">Latest updates across sales lifecycle</span>
-        </div>
-        <ActivityList items={summary.recentActivity} />
       </section>
     </div>
   );

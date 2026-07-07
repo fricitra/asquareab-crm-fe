@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { listCurrencies } from "../api/currencies";
@@ -16,6 +16,9 @@ import {
   type Contract
 } from "../api/contracts";
 import { listReservations } from "../api/reservations";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type ContractFormValues = {
@@ -55,11 +58,6 @@ function pickNumber(value: string) {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
-
-function money(value: number | null, currencyCode: string | null) {
-  if (value === null) return "-";
-  return `${value.toLocaleString()} ${currencyCode ?? ""}`.trim();
 }
 
 function contractNextAction(contract: Contract) {
@@ -119,7 +117,10 @@ function contractNextAction(contract: Contract) {
   };
 }
 
-function contractWorkflowSteps(contract: Contract): WorkflowStep[] {
+function contractWorkflowSteps(
+  contract: Contract,
+  formatValue: (value: number | null, currencyCode: string | null) => string
+): WorkflowStep[] {
   const status = contract.contractStatus.code;
   const history = contract.statusHistory ?? [];
   const historyByCode = new Map(history.map((item) => [item.contractStatus.code, item]));
@@ -145,7 +146,7 @@ function contractWorkflowSteps(contract: Contract): WorkflowStep[] {
         { label: "Reservation", value: contract.reservation.reservationNo },
         { label: "Customer", value: contract.customer.name },
         { label: "Unit", value: contract.unit.unitCode },
-        { label: "Value", value: money(contract.contractValue, contract.currencyCode) }
+        { label: "Value", value: formatValue(contract.contractValue, contract.currencyCode) }
       ]
     },
     {
@@ -206,13 +207,16 @@ function contractWorkflowSteps(contract: Contract): WorkflowStep[] {
 
 export function ContractsPage() {
   const queryClient = useQueryClient();
+  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const contractForm = useForm<ContractFormValues>({
-    defaultValues: { reservationId: "", contractValue: "", currencyCode: "USD", remarks: "" }
+    defaultValues: { reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" }
   });
   const paymentPlanForm = useForm<PaymentPlanFormValues>({
     defaultValues: {
@@ -233,10 +237,19 @@ export function ContractsPage() {
   });
 
   const contractsQuery = useQuery({
-    queryKey: ["contracts", search],
-    queryFn: () => listContracts(search),
+    queryKey: ["contracts", search, page],
+    queryFn: () =>
+      listContracts({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
   const contractDetailQuery = useQuery({
     queryKey: ["contract", selectedContractId],
     queryFn: () => getContract(selectedContractId ?? ""),
@@ -244,7 +257,7 @@ export function ContractsPage() {
   });
   const reservationsQuery = useQuery({
     queryKey: ["reservations", "contract-select"],
-    queryFn: () => listReservations(),
+    queryFn: () => listReservations({ limit: DROPDOWN_LIST_LIMIT }),
     staleTime: 10_000
   });
   const currenciesQuery = useQuery({
@@ -273,7 +286,7 @@ export function ContractsPage() {
     onSuccess: (contract) => {
       setCreateOpen(false);
       refreshContract(contract, "Contract draft is ready.");
-      contractForm.reset({ reservationId: "", contractValue: "", currencyCode: "USD", remarks: "" });
+      contractForm.reset({ reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" });
     },
     onError: () => setMessage("Contract could not be created. Use an approved reservation.")
   });
@@ -354,9 +367,12 @@ export function ContractsPage() {
     const total = contractsQuery.data?.pagination.total ?? 0;
     const draft = contractRows.filter((contract) => contract.contractStatus.code === "DRAFT").length;
     const signed = contractRows.filter((contract) => contract.contractStatus.code === "SIGNED").length;
-    const value = contractRows.reduce((sum, contract) => sum + (contract.contractValue ?? 0), 0);
+    const value = contractRows.reduce(
+      (sum, contract) => sum + toBase(contract.contractValue, contract.currencyCode),
+      0
+    );
     return { total, draft, signed, value };
-  }, [contractRows, contractsQuery.data?.pagination.total]);
+  }, [contractRows, contractsQuery.data?.pagination.total, toBase]);
 
   const onContractSubmit = contractForm.handleSubmit((values) => {
     if (!values.reservationId) {
@@ -408,7 +424,7 @@ export function ContractsPage() {
         </article>
         <article className="crm-card">
           <h3>Value</h3>
-          <div className="crm-kpi">{stats.value.toLocaleString()}</div>
+          <div className="crm-kpi">{formatInBase(stats.value)}</div>
         </article>
       </section>
 
@@ -496,7 +512,7 @@ export function ContractsPage() {
                   <td>{contract.customer.name}</td>
                   <td>{contract.unit.unitCode}</td>
                   <td>{contract.contractStatus.name}</td>
-                  <td>{money(contract.contractValue, contract.currencyCode)}</td>
+                  <td>{formatInBase(contract.contractValue, contract.currencyCode)}</td>
                   <td>{contract.erpHandoffStatus}</td>
                 </tr>
               ))}
@@ -510,6 +526,13 @@ export function ContractsPage() {
             </tbody>
           </table>
         </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={contractsQuery.data?.pagination.total ?? 0}
+          itemLabel="contracts"
+          onPageChange={setPage}
+        />
       </section>
 
       <section className="crm-panel crm-lead-detail-wide">
@@ -523,7 +546,7 @@ export function ContractsPage() {
               </div>
               <span className="crm-status-pill">{selectedContract.contractStatus.name}</span>
             </div>
-            <WorkflowTracker steps={contractWorkflowSteps(selectedContract)} />
+            <WorkflowTracker steps={contractWorkflowSteps(selectedContract, formatInBase)} />
             <dl className="crm-detail-list">
               <div>
                 <dt>Reservation</dt>
@@ -543,7 +566,7 @@ export function ContractsPage() {
               </div>
               <div>
                 <dt>Value</dt>
-                <dd>{money(selectedContract.contractValue, selectedContract.currencyCode)}</dd>
+                <dd>{formatInBase(selectedContract.contractValue, selectedContract.currencyCode)}</dd>
               </div>
               <div>
                 <dt>ERP Handoff</dt>
@@ -656,7 +679,7 @@ export function ContractsPage() {
                     <span>{plan.planCode}</span>
                     {plan.lines.map((line) => (
                       <p key={line.id}>
-                        {line.sequenceNo}. {line.milestoneLabel ?? "Milestone"} - {money(line.amount, plan.currencyCode)}
+                        {line.sequenceNo}. {line.milestoneLabel ?? "Milestone"} - {formatInBase(line.amount, plan.currencyCode)}
                       </p>
                     ))}
                   </article>

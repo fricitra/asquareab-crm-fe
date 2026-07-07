@@ -32,6 +32,7 @@ export type DashboardAttentionItem = {
 };
 
 export type DashboardSummary = {
+  displayCurrency: string;
   metrics: {
     totalLeads: number;
     newLeads: number;

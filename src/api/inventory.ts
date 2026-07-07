@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 type NamedLink = {
   id: string | null;
@@ -261,26 +262,22 @@ export type UpsertUnitSalesInformationPayload = {
   remarks?: string;
 };
 
-export async function listProjects(search?: string) {
+export async function listProjects(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Project[];
     pagination: { limit: number; offset: number; total: number };
   }>("/inventory/projects", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }
 
-export async function listUnits(params?: { search?: string; limit?: number; offset?: number }) {
+export async function listUnits(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Unit[];
     pagination: { limit: number; offset: number; total: number };
   }>("/inventory/units", {
-    params: {
-      search: params?.search || undefined,
-      limit: params?.limit,
-      offset: params?.offset
-    }
+    params: buildListQueryParams(params)
   });
   return response.data;
 }

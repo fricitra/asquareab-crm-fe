@@ -13,6 +13,9 @@ import {
   type OpportunityDetail
 } from "../api/opportunities";
 import { getReferenceFamily } from "../api/reference-data";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type StageFormValues = {
@@ -51,7 +54,10 @@ function formatDate(value: string | null) {
 
 const opportunityStageOrder = ["Open", "Qualified", "Site Visit", "Negotiation", "Proposal", "Reservation Ready"];
 
-function opportunityWorkflowSteps(opportunity: OpportunityDetail): WorkflowStep[] {
+function opportunityWorkflowSteps(
+  opportunity: OpportunityDetail,
+  formatBudget: (amount: number | null | undefined, currencyCode?: string | null) => string
+): WorkflowStep[] {
   const historyByStage = new Map(opportunity.stageHistory.map((entry) => [entry.opportunityStage.name ?? "", entry]));
   const currentStageName = opportunity.opportunityStage.name ?? "Qualified";
   const currentIndex = Math.max(opportunityStageOrder.indexOf(currentStageName), 0);
@@ -75,7 +81,7 @@ function opportunityWorkflowSteps(opportunity: OpportunityDetail): WorkflowStep[
         (isCurrent ? opportunity.remarks : index === currentIndex + 1 ? "This is the next suggested workflow stage." : null),
       details: [
         { label: "Probability", value: history?.probabilityPercent ?? (isCurrent ? opportunity.probabilityPercent : null) },
-        { label: "Budget", value: opportunity.budgetAmount ? `${opportunity.budgetAmount.toLocaleString()} ${opportunity.currencyCode ?? ""}` : null },
+        { label: "Budget", value: opportunity.budgetAmount ? formatBudget(opportunity.budgetAmount, opportunity.currencyCode) : null },
         { label: "Project", value: opportunity.projectCode },
         { label: "Unit", value: opportunity.proposedUnitCode },
         { label: "Expected Close", value: opportunity.expectedCloseDate },
@@ -157,9 +163,12 @@ function suggestedProbability(stageName: string | null) {
 }
 
 export function OpportunitiesPage() {
+  const { formatInBase, toBase } = useMoneyFormatter();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -174,10 +183,19 @@ export function OpportunitiesPage() {
   });
 
   const opportunitiesQuery = useQuery({
-    queryKey: ["opportunities", search],
-    queryFn: () => listOpportunities(search),
+    queryKey: ["opportunities", search, page],
+    queryFn: () =>
+      listOpportunities({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
 
   const opportunityDetailQuery = useQuery({
     queryKey: ["opportunity", selectedOpportunityId],
@@ -265,14 +283,17 @@ export function OpportunitiesPage() {
 
   const stats = useMemo(() => {
     const open = opportunityRows.filter((opportunity) => opportunity.status === "OPEN").length;
-    const totalBudget = opportunityRows.reduce((sum, opportunity) => sum + (opportunity.budgetAmount ?? 0), 0);
+    const totalBudget = opportunityRows.reduce(
+      (sum, opportunity) => sum + toBase(opportunity.budgetAmount, opportunity.currencyCode),
+      0
+    );
     const avgProbability =
       opportunityRows.length === 0
         ? 0
         : Math.round(opportunityRows.reduce((sum, opportunity) => sum + (opportunity.probabilityPercent ?? 0), 0) / opportunityRows.length);
 
     return { total: opportunitiesQuery.data?.pagination.total ?? 0, open, totalBudget, avgProbability };
-  }, [opportunitiesQuery.data?.pagination.total, opportunityRows]);
+  }, [opportunitiesQuery.data?.pagination.total, opportunityRows, toBase]);
 
   const onStageSubmit = stageForm.handleSubmit((values) => {
     if (!selectedOpportunityId || !values.opportunityStageRefId) return;
@@ -330,7 +351,7 @@ export function OpportunitiesPage() {
         </article>
         <article className="crm-card">
           <h3>Pipeline Value</h3>
-          <div className="crm-kpi">{stats.totalBudget.toLocaleString()}</div>
+          <div className="crm-kpi">{formatInBase(stats.totalBudget)}</div>
         </article>
         <article className="crm-card">
           <h3>Avg Probability</h3>
@@ -378,7 +399,7 @@ export function OpportunitiesPage() {
                   <td>{opportunity.opportunityStage.name ?? "-"}</td>
                   <td>{opportunity.probabilityPercent ?? "-"}%</td>
                   <td>
-                    {opportunity.budgetAmount?.toLocaleString() ?? "-"} {opportunity.currencyCode ?? ""}
+                    {formatInBase(opportunity.budgetAmount, opportunity.currencyCode)}
                   </td>
                   <td>{opportunity.projectCode ?? "-"}</td>
                 </tr>
@@ -393,6 +414,13 @@ export function OpportunitiesPage() {
             </tbody>
           </table>
         </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={opportunitiesQuery.data?.pagination.total ?? 0}
+          itemLabel="opportunities"
+          onPageChange={setPage}
+        />
       </section>
 
       <section className="crm-panel crm-lead-detail-wide">
@@ -406,7 +434,7 @@ export function OpportunitiesPage() {
                 </div>
                 <span className="crm-status-pill">{selectedOpportunity.opportunityStage.name ?? selectedOpportunity.status}</span>
               </div>
-              <WorkflowTracker steps={opportunityWorkflowSteps(selectedOpportunity)} />
+              <WorkflowTracker steps={opportunityWorkflowSteps(selectedOpportunity, formatInBase)} />
 
               <dl className="crm-detail-list">
                 <div>
@@ -416,7 +444,7 @@ export function OpportunitiesPage() {
                 <div>
                   <dt>Budget</dt>
                   <dd>
-                    {selectedOpportunity.budgetAmount?.toLocaleString() ?? "-"} {selectedOpportunity.currencyCode ?? ""}
+                    {formatInBase(selectedOpportunity.budgetAmount, selectedOpportunity.currencyCode)}
                   </dd>
                 </div>
                 <div>

@@ -12,6 +12,7 @@ import { LoginPage } from "../views/LoginPage";
 import { OpportunitiesPage } from "../views/OpportunitiesPage";
 import { ProposalsPage } from "../views/ProposalsPage";
 import { ReferenceDataPage } from "../views/ReferenceDataPage";
+import { RecentActivityPage } from "../views/RecentActivityPage";
 import { ReservationsPage } from "../views/ReservationsPage";
 
 export const router = createBrowserRouter([
@@ -68,6 +69,10 @@ export const router = createBrowserRouter([
           {
             path: "/reference-data",
             element: <ReferenceDataPage />
+          },
+          {
+            path: "/recent-activity",
+            element: <RecentActivityPage />
           }
         ]
       }

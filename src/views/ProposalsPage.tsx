@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { listCurrencies } from "../api/currencies";
@@ -14,6 +14,9 @@ import {
   submitProposal,
   type Proposal
 } from "../api/proposals";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type ProposalFormValues = {
@@ -45,11 +48,6 @@ function pickNumber(value: string) {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
-
-function money(value: number | null | undefined, currencyCode: string | null | undefined) {
-  if (value === null || value === undefined) return "-";
-  return `${value.toLocaleString()} ${currencyCode ?? ""}`.trim();
 }
 
 function proposalNextAction(proposal: Proposal) {
@@ -98,7 +96,10 @@ function proposalNextAction(proposal: Proposal) {
   };
 }
 
-function proposalWorkflowSteps(proposal: Proposal): WorkflowStep[] {
+function proposalWorkflowSteps(
+  proposal: Proposal,
+  formatValue: (value: number | null | undefined, currencyCode?: string | null) => string
+): WorkflowStep[] {
   const status = proposal.proposalStatus.code;
   const history = proposal.approvalHistory ?? [];
   const historyByToStatus = new Map(history.map((item) => [item.toStatus.code, item]));
@@ -121,7 +122,7 @@ function proposalWorkflowSteps(proposal: Proposal): WorkflowStep[] {
         { label: "Opportunity", value: proposal.opportunity.opportunityNo },
         { label: "Customer", value: proposal.customer.name },
         { label: "Unit", value: proposal.unit.unitCode },
-        { label: "Proposed", value: money(proposal.proposedPrice, proposal.currencyCode) }
+        { label: "Proposed", value: formatValue(proposal.proposedPrice, proposal.currencyCode) }
       ]
     },
     {
@@ -147,9 +148,9 @@ function proposalWorkflowSteps(proposal: Proposal): WorkflowStep[] {
       role: historyByToStatus.get("APPROVED")?.approvalRoleCode ?? null,
       summary: isApproved ? historyByToStatus.get("APPROVED")?.remarks ?? "Proposal approved for customer acceptance." : "Approve after validating discount and commercial terms.",
       details: [
-        { label: "List Price", value: money(proposal.listPrice, proposal.currencyCode) },
-        { label: "Discount Amount", value: money(proposal.discountAmount, proposal.currencyCode) },
-        { label: "Proposed Price", value: money(proposal.proposedPrice, proposal.currencyCode) }
+        { label: "List Price", value: formatValue(proposal.listPrice, proposal.currencyCode) },
+        { label: "Discount Amount", value: formatValue(proposal.discountAmount, proposal.currencyCode) },
+        { label: "Proposed Price", value: formatValue(proposal.proposedPrice, proposal.currencyCode) }
       ]
     },
     {
@@ -171,7 +172,10 @@ function proposalWorkflowSteps(proposal: Proposal): WorkflowStep[] {
 
 export function ProposalsPage() {
   const queryClient = useQueryClient();
+  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -181,7 +185,7 @@ export function ProposalsPage() {
       opportunityId: "",
       unitId: "",
       validUntil: "",
-      currencyCode: "USD",
+      currencyCode: defaultContractCurrency,
       listPrice: "",
       proposedPrice: "",
       discountAmount: "",
@@ -195,10 +199,19 @@ export function ProposalsPage() {
   });
 
   const proposalsQuery = useQuery({
-    queryKey: ["proposals", search],
-    queryFn: () => listProposals(search),
+    queryKey: ["proposals", search, page],
+    queryFn: () =>
+      listProposals({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (page - 1) * pageSize
+      }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
   const proposalDetailQuery = useQuery({
     queryKey: ["proposal", selectedProposalId],
     queryFn: () => getProposal(selectedProposalId ?? ""),
@@ -206,12 +219,12 @@ export function ProposalsPage() {
   });
   const opportunitiesQuery = useQuery({
     queryKey: ["opportunities", "proposal-select"],
-    queryFn: () => listOpportunities(),
+    queryFn: () => listOpportunities({ limit: DROPDOWN_LIST_LIMIT }),
     staleTime: 10_000
   });
   const unitsQuery = useQuery({
     queryKey: ["units", "proposal-select"],
-    queryFn: () => listUnits(),
+    queryFn: () => listUnits({ limit: DROPDOWN_LIST_LIMIT }),
     staleTime: 10_000
   });
   const currenciesQuery = useQuery({
@@ -237,9 +250,12 @@ export function ProposalsPage() {
     const total = proposalsQuery.data?.pagination.total ?? proposalRows.length;
     const approvalRequired = proposalRows.filter((proposal) => proposal.approvalRequired).length;
     const approved = proposalRows.filter((proposal) => ["APPROVED", "ACCEPTED"].includes(proposal.proposalStatus.code ?? "")).length;
-    const value = proposalRows.reduce((sum, proposal) => sum + proposal.proposedPrice, 0);
+    const value = proposalRows.reduce(
+      (sum, proposal) => sum + toBase(proposal.proposedPrice, proposal.currencyCode),
+      0
+    );
     return { total, approvalRequired, approved, value };
-  }, [proposalRows, proposalsQuery.data?.pagination.total]);
+  }, [proposalRows, proposalsQuery.data?.pagination.total, toBase]);
 
   const refreshProposal = (proposal: Proposal, successMessage: string) => {
     setMessage(successMessage);
@@ -269,7 +285,7 @@ export function ProposalsPage() {
         opportunityId: "",
         unitId: "",
         validUntil: "",
-        currencyCode: "USD",
+        currencyCode: defaultContractCurrency,
         listPrice: "",
         proposedPrice: "",
         discountAmount: "",
@@ -341,7 +357,7 @@ export function ProposalsPage() {
         </article>
         <article className="crm-card">
           <h3>Proposal Value</h3>
-          <div className="crm-kpi">{stats.value.toLocaleString()}</div>
+          <div className="crm-kpi">{formatInBase(stats.value)}</div>
         </article>
       </section>
 
@@ -383,7 +399,7 @@ export function ProposalsPage() {
               <option value="">Select unit</option>
               {(unitsQuery.data?.items ?? []).map((unit) => (
                 <option key={unit.id} value={unit.id}>
-                  {unit.unitCode} - {money(unit.basePrice, unit.currencyCode)}
+                  {unit.unitCode} - {formatInBase(unit.basePrice, unit.currencyCode)}
                 </option>
               ))}
             </select>
@@ -442,7 +458,7 @@ export function ProposalsPage() {
           </div>
           <div>
             <dt>Unit Price</dt>
-            <dd>{money(selectedUnit?.basePrice, selectedUnit?.currencyCode)}</dd>
+            <dd>{formatInBase(selectedUnit?.basePrice, selectedUnit?.currencyCode)}</dd>
           </div>
           <div>
             <dt>Unit Status</dt>
@@ -490,7 +506,7 @@ export function ProposalsPage() {
                   <td>{proposal.unit.unitCode ?? "-"}</td>
                   <td>{proposal.proposalStatus.name}</td>
                   <td>{proposal.discountPercent === null ? "-" : `${proposal.discountPercent}%`}</td>
-                  <td>{money(proposal.proposedPrice, proposal.currencyCode)}</td>
+                  <td>{formatInBase(proposal.proposedPrice, proposal.currencyCode)}</td>
                 </tr>
               ))}
               {proposalRows.length === 0 ? (
@@ -503,6 +519,13 @@ export function ProposalsPage() {
             </tbody>
           </table>
         </div>
+        <ListPagination
+          page={page}
+          pageSize={pageSize}
+          total={proposalsQuery.data?.pagination.total ?? 0}
+          itemLabel="proposals"
+          onPageChange={setPage}
+        />
       </section>
 
       <section className="crm-panel crm-lead-detail-wide">
@@ -516,7 +539,7 @@ export function ProposalsPage() {
               </div>
               <span className="crm-status-pill">{selectedProposal.proposalStatus.name}</span>
             </div>
-            <WorkflowTracker steps={proposalWorkflowSteps(selectedProposal)} />
+            <WorkflowTracker steps={proposalWorkflowSteps(selectedProposal, formatInBase)} />
             <dl className="crm-detail-list">
               <div>
                 <dt>Opportunity</dt>
@@ -528,16 +551,16 @@ export function ProposalsPage() {
               </div>
               <div>
                 <dt>List Price</dt>
-                <dd>{money(selectedProposal.listPrice, selectedProposal.currencyCode)}</dd>
+                <dd>{formatInBase(selectedProposal.listPrice, selectedProposal.currencyCode)}</dd>
               </div>
               <div>
                 <dt>Proposed Price</dt>
-                <dd>{money(selectedProposal.proposedPrice, selectedProposal.currencyCode)}</dd>
+                <dd>{formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}</dd>
               </div>
               <div>
                 <dt>Discount</dt>
                 <dd>
-                  {money(selectedProposal.discountAmount, selectedProposal.currencyCode)} /{" "}
+                  {formatInBase(selectedProposal.discountAmount, selectedProposal.currencyCode)} /{" "}
                   {selectedProposal.discountPercent === null ? "-" : `${selectedProposal.discountPercent}%`}
                 </dd>
               </div>

@@ -653,6 +653,52 @@ textarea {
   justify-content: flex-end;
 }
 
+.crm-dashboard-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.crm-dashboard-currency-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(15, 118, 110, 0.12), rgba(20, 184, 166, 0.08));
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  color: #0f4c45;
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.crm-currency-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.crm-currency-badge-label {
+  color: #5b706d;
+  font-weight: 500;
+}
+
+.crm-currency-badge-code {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .crm-dashboard-actions .crm-secondary-button {
   display: inline-flex;
   align-items: center;

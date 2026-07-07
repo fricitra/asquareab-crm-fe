@@ -1,4 +1,5 @@
 import { apiClient } from "../lib/api-client";
+import { buildListQueryParams, type ListQueryParams } from "../lib/list-pagination";
 
 type NamedLink = {
   id: string | null;
@@ -130,12 +131,12 @@ export type CreatePaymentPlanPayload = {
   }>;
 };
 
-export async function listContracts(search?: string) {
+export async function listContracts(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Contract[];
     pagination: { limit: number; offset: number; total: number };
   }>("/contracts", {
-    params: search ? { search } : undefined
+    params: buildListQueryParams(params)
   });
   return response.data;
 }
