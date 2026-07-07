@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { getApiErrorMessage } from "../api/auth";
 import { getDashboardSummary, type DashboardActivity, type DashboardBreakdown } from "../api/dashboard";
+import { useAuthStore } from "../store/auth-store";
 
 function money(value: number, currencyCode = "USD") {
   return `${value.toLocaleString()} ${currencyCode}`;
@@ -73,10 +75,13 @@ function ActivityList({ items }: { items: DashboardActivity[] }) {
 }
 
 export function DashboardPage() {
+  const accessToken = useAuthStore((state) => state.accessToken);
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", "summary"],
     queryFn: getDashboardSummary,
-    staleTime: 15_000
+    enabled: Boolean(accessToken),
+    staleTime: 15_000,
+    retry: 1
   });
 
   const summary = dashboardQuery.data;
@@ -101,7 +106,18 @@ export function DashboardPage() {
     return (
       <section className="crm-panel">
         <h3>Dashboard unavailable</h3>
-        <p className="crm-muted-text">The dashboard summary could not be loaded.</p>
+        <p className="crm-muted-text">
+          {dashboardQuery.error
+            ? getApiErrorMessage(dashboardQuery.error)
+            : "The dashboard summary could not be loaded."}
+        </p>
+        <button
+          className="crm-secondary-button"
+          type="button"
+          onClick={() => dashboardQuery.refetch()}
+        >
+          Retry
+        </button>
       </section>
     );
   }

@@ -1647,13 +1647,66 @@ textarea {
 
 .crm-reference-shell .crm-nav-group-label {
   margin: 0;
-  padding: 14px 18px 8px;
-  color: #c8d8e6;
-  font-size: 0.72rem;
-  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.crm-reference-shell .crm-nav-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 42px;
+  padding: 12px 18px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.crm-reference-shell .crm-nav-group-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.crm-reference-shell .crm-nav-group-toggle .crm-nav-icon {
+  width: 14px;
+  height: 14px;
+  opacity: 0.72;
+  transition: transform 0.2s ease;
+}
+
+.crm-reference-shell .crm-nav-group.is-collapsed .crm-nav-group-toggle .crm-nav-icon {
+  transform: rotate(-90deg);
+}
+
+.crm-reference-shell .crm-nav-group.is-active-group .crm-nav-group-toggle .crm-nav-group-label {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.crm-reference-shell .crm-nav-group-items {
+  display: grid;
+  overflow: hidden;
+  transition: max-height 0.22s ease;
+  max-height: 480px;
+}
+
+.crm-reference-shell .crm-nav-group.is-collapsed .crm-nav-group-items {
+  max-height: 0;
+}
+
+.crm-reference-shell .crm-nav-group .crm-nav-link {
+  padding-left: 28px;
+  font-weight: 600;
 }
 
 .crm-reference-shell .crm-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   min-height: 46px;
   padding: 13px 18px;
   border-radius: 0;
@@ -1663,10 +1716,29 @@ textarea {
   font-weight: 650;
 }
 
+.crm-reference-shell .crm-nav-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  opacity: 0.9;
+}
+
+.crm-reference-shell .crm-nav-link.active .crm-nav-icon {
+  opacity: 1;
+}
+
+.crm-reference-shell .crm-nav-link span {
+  min-width: 0;
+}
+
 .crm-reference-shell .crm-nav-link.active {
   background: #0f7b69;
   color: #fff;
   box-shadow: inset 5px 0 0 #f3f6fb;
+}
+
+.crm-reference-shell .crm-nav-link:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .crm-reference-shell .crm-content {

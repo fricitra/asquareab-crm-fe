@@ -75,5 +75,12 @@ export function getApiErrorMessage(error: unknown) {
     return (error.response.data as { message?: string } | undefined)?.message ?? "Invalid username or password.";
   }
 
-  return `Request failed with status ${error.response.status}.`;
+  if (error.response.status === 403) {
+    return (error.response.data as { message?: string } | undefined)?.message ?? "You do not have permission for this action.";
+  }
+
+  return (
+    (error.response.data as { message?: string } | undefined)?.message ??
+    `Request failed with status ${error.response.status}.`
+  );
 }
