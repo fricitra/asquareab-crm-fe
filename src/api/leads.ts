@@ -10,12 +10,21 @@ export type Lead = {
   id: string;
   leadNo: string;
   leadTitle: string | null;
+  firstName: string | null;
   leadSource: NamedLink;
   captureChannel: NamedLink;
   campaign: NamedLink;
+  campaignNotes: string | null;
   broker: NamedLink;
   customer: NamedLink;
   contactName: string | null;
+  lastName: string | null;
+  gender: NamedLink;
+  dateOfBirth: string | null;
+  nationality: NamedLink;
+  country: NamedLink;
+  city: string | null;
+  currentResidenceCountry: NamedLink;
   mobileNo: string | null;
   whatsappNo: string | null;
   email: string | null;
@@ -29,6 +38,10 @@ export type Lead = {
   preferredProjectCode: string | null;
   preferredLocationCode: string | null;
   preferredUnitType: NamedLink;
+  preferredBedroom: NamedLink;
+  preferredView: NamedLink;
+  incomeRange: NamedLink;
+  acquisitionCost: number | null;
   purchaseTimeline: NamedLink;
   qualificationNotes: string | null;
   qualifiedAt: string | null;
@@ -60,6 +73,8 @@ export type LeadDetail = Lead & {
 };
 
 export type CreateLeadPayload = {
+  firstName?: string;
+  lastName?: string;
   leadTitle?: string;
   contactName?: string;
   mobileNo?: string;
@@ -67,32 +82,73 @@ export type CreateLeadPayload = {
   email?: string;
   leadSourceRefId?: string;
   captureChannelRefId?: string;
+  campaignId?: string;
+  campaignNotes?: string;
   leadRatingRefId?: string;
+  genderRefId?: string;
+  dateOfBirth?: string;
+  nationalityRefId?: string;
+  countryRefId?: string;
+  city?: string;
+  currentResidenceCountryRefId?: string;
   buyerTypeRefId?: string;
   fundingSourceRefId?: string;
-  budgetMin?: number;
   budgetMax?: number;
   preferredCurrencyCode?: string;
   preferredProjectCode?: string;
   preferredLocationCode?: string;
   preferredUnitTypeRefId?: string;
+  preferredBedroomRefId?: string;
+  preferredViewRefId?: string;
+  incomeRangeRefId?: string;
+  acquisitionCost?: number;
   purchaseTimelineRefId?: string;
   qualificationNotes?: string;
+  assignedToUserId?: string;
+  dateGenerated?: string;
   scoreTotal?: number;
   remarks?: string;
+};
+
+export type UpdateLeadPayload = CreateLeadPayload;
+
+export type LeadDuplicateCheck = {
+  isDuplicate: boolean;
+  lead: { id: string; leadNo: string } | null;
+};
+
+export type LeadCampaignOption = {
+  id: string;
+  name: string;
+  campaignCode: string;
+};
+
+export type LeadAssignableUser = {
+  id: string;
+  name: string;
+  email: string;
 };
 
 export type QualifyLeadPayload = {
   leadStatusRefId?: string;
   leadRatingRefId?: string;
+  genderRefId?: string;
+  dateOfBirth?: string;
+  nationalityRefId?: string;
+  countryRefId?: string;
+  city?: string;
+  currentResidenceCountryRefId?: string;
   buyerTypeRefId?: string;
   fundingSourceRefId?: string;
-  budgetMin?: number;
   budgetMax?: number;
   preferredCurrencyCode?: string;
   preferredProjectCode?: string;
   preferredLocationCode?: string;
   preferredUnitTypeRefId?: string;
+  preferredBedroomRefId?: string;
+  preferredViewRefId?: string;
+  incomeRangeRefId?: string;
+  acquisitionCost?: number;
   purchaseTimelineRefId?: string;
   qualificationNotes?: string;
   scoreTotal?: number;
@@ -109,6 +165,27 @@ export async function listLeads(params?: ListQueryParams) {
   return response.data;
 }
 
+export async function checkLeadDuplicate(params: {
+  firstName: string;
+  lastName: string;
+  mobileNo: string;
+  email: string;
+  excludeLeadId?: string;
+}) {
+  const response = await apiClient.get<LeadDuplicateCheck>("/leads/check-duplicate", { params });
+  return response.data;
+}
+
+export async function listLeadCampaigns() {
+  const response = await apiClient.get<{ items: LeadCampaignOption[] }>("/leads/lookup/campaigns");
+  return response.data.items;
+}
+
+export async function listLeadAssignableUsers() {
+  const response = await apiClient.get<{ items: LeadAssignableUser[] }>("/leads/lookup/assignable-users");
+  return response.data.items;
+}
+
 export async function createLead(payload: CreateLeadPayload) {
   const response = await apiClient.post<LeadDetail>("/leads", payload);
   return response.data;
@@ -116,6 +193,11 @@ export async function createLead(payload: CreateLeadPayload) {
 
 export async function getLead(id: string) {
   const response = await apiClient.get<LeadDetail>(`/leads/${id}`);
+  return response.data;
+}
+
+export async function updateLead(id: string, payload: UpdateLeadPayload) {
+  const response = await apiClient.patch<LeadDetail>(`/leads/${id}`, payload);
   return response.data;
 }
 

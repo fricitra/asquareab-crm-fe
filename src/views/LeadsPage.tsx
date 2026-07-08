@@ -1,34 +1,77 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
 import { useForm, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
-import { assignLead, createLead, getLead, listLeads, qualifyLead, type CreateLeadPayload, type Lead, type QualifyLeadPayload } from "../api/leads";
+import {
+  assignLead,
+  checkLeadDuplicate,
+  createLead,
+  getLead,
+  listLeadAssignableUsers,
+  listLeadCampaigns,
+  listLeads,
+  qualifyLead,
+  updateLead,
+  type CreateLeadPayload,
+  type Lead,
+  type LeadAssignableUser,
+  type LeadCampaignOption,
+  type QualifyLeadPayload
+} from "../api/leads";
 import { convertLeadToOpportunity } from "../api/opportunities";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 import { DEFAULT_LIST_PAGE_SIZE, getRowSerialNumber } from "../lib/list-pagination";
+import {
+  buildLeadValidationMessage,
+  getFirstInvalidLeadField,
+  todayIsoDate,
+  validateMandatoryLeadFields,
+  type LeadFormFieldName
+} from "../lib/lead-form-validation";
 import { ListPagination } from "../shared/ListPagination";
+import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
-import { formatMoneyRange } from "../lib/format-money";
 import { useAuthStore } from "../store/auth-store";
 
+type NoticeState = {
+  open: boolean;
+  title: string;
+  message: string;
+  variant: "error" | "success" | "info";
+};
+
 type LeadFormValues = {
-  leadTitle: string;
-  contactName: string;
+  firstName: string;
+  lastName: string;
   mobileNo: string;
   whatsappNo: string;
   email: string;
   leadSourceRefId: string;
   captureChannelRefId: string;
+  campaignId: string;
+  campaignNotes: string;
+  assignedToUserId: string;
+  dateGenerated: string;
   leadRatingRefId: string;
+  genderRefId: string;
+  dateOfBirth: string;
+  nationalityRefId: string;
+  countryRefId: string;
+  city: string;
+  currentResidenceCountryRefId: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
-  budgetMin: string;
   budgetMax: string;
   preferredCurrencyCode: string;
   preferredProjectCode: string;
   preferredLocationCode: string;
   preferredUnitTypeRefId: string;
+  preferredBedroomRefId: string;
+  preferredViewRefId: string;
+  incomeRangeRefId: string;
+  acquisitionCost: string;
   purchaseTimelineRefId: string;
   qualificationNotes: string;
   scoreTotal: string;
@@ -37,11 +80,20 @@ type LeadFormValues = {
 
 type QualifyFormValues = {
   leadRatingRefId: string;
+  genderRefId: string;
+  dateOfBirth: string;
+  nationalityRefId: string;
+  countryRefId: string;
+  city: string;
+  currentResidenceCountryRefId: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
   purchaseTimelineRefId: string;
-  budgetMin: string;
   budgetMax: string;
+  preferredBedroomRefId: string;
+  preferredViewRefId: string;
+  incomeRangeRefId: string;
+  acquisitionCost: string;
   scoreTotal: string;
   scoreEngagement: string;
   scoreBehavior: string;
@@ -58,24 +110,46 @@ function pickString(value: string) {
   return value.trim() === "" ? undefined : value.trim();
 }
 
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (axios.isAxiosError(error)) {
+    const message = (error.response?.data as { message?: string } | undefined)?.message;
+    return message && message.trim() !== "" ? message : fallback;
+  }
+
+  return fallback;
+}
+
 function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
   return {
-    leadTitle: pickString(values.leadTitle),
-    contactName: pickString(values.contactName),
+    firstName: pickString(values.firstName),
+    lastName: pickString(values.lastName),
     mobileNo: pickString(values.mobileNo),
     whatsappNo: pickString(values.whatsappNo),
     email: pickString(values.email),
     leadSourceRefId: pickString(values.leadSourceRefId),
     captureChannelRefId: pickString(values.captureChannelRefId),
+    campaignId: pickString(values.campaignId),
+    campaignNotes: pickString(values.campaignNotes),
+    assignedToUserId: pickString(values.assignedToUserId),
+    dateGenerated: pickString(values.dateGenerated),
     leadRatingRefId: pickString(values.leadRatingRefId),
+    genderRefId: pickString(values.genderRefId),
+    dateOfBirth: pickString(values.dateOfBirth),
+    nationalityRefId: pickString(values.nationalityRefId),
+    countryRefId: pickString(values.countryRefId),
+    city: pickString(values.city),
+    currentResidenceCountryRefId: pickString(values.currentResidenceCountryRefId),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
-    budgetMin: pickNumber(values.budgetMin),
     budgetMax: pickNumber(values.budgetMax),
     preferredCurrencyCode: pickString(values.preferredCurrencyCode),
     preferredProjectCode: pickString(values.preferredProjectCode),
     preferredLocationCode: pickString(values.preferredLocationCode),
     preferredUnitTypeRefId: pickString(values.preferredUnitTypeRefId),
+    preferredBedroomRefId: pickString(values.preferredBedroomRefId),
+    preferredViewRefId: pickString(values.preferredViewRefId),
+    incomeRangeRefId: pickString(values.incomeRangeRefId),
+    acquisitionCost: pickNumber(values.acquisitionCost),
     purchaseTimelineRefId: pickString(values.purchaseTimelineRefId),
     qualificationNotes: pickString(values.qualificationNotes),
     scoreTotal: pickNumber(values.scoreTotal),
@@ -86,11 +160,20 @@ function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
 function toQualifyPayload(values: QualifyFormValues): QualifyLeadPayload {
   return {
     leadRatingRefId: pickString(values.leadRatingRefId),
+    genderRefId: pickString(values.genderRefId),
+    dateOfBirth: pickString(values.dateOfBirth),
+    nationalityRefId: pickString(values.nationalityRefId),
+    countryRefId: pickString(values.countryRefId),
+    city: pickString(values.city),
+    currentResidenceCountryRefId: pickString(values.currentResidenceCountryRefId),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
     purchaseTimelineRefId: pickString(values.purchaseTimelineRefId),
-    budgetMin: pickNumber(values.budgetMin),
     budgetMax: pickNumber(values.budgetMax),
+    preferredBedroomRefId: pickString(values.preferredBedroomRefId),
+    preferredViewRefId: pickString(values.preferredViewRefId),
+    incomeRangeRefId: pickString(values.incomeRangeRefId),
+    acquisitionCost: pickNumber(values.acquisitionCost),
     scoreTotal: pickNumber(values.scoreTotal),
     scoreEngagement: pickNumber(values.scoreEngagement),
     scoreBehavior: pickNumber(values.scoreBehavior),
@@ -136,10 +219,7 @@ function leadNextAction(lead: Lead) {
   };
 }
 
-function leadWorkflowSteps(
-  lead: Lead,
-  formatBudget: (min: number | null, max: number | null, currency?: string | null) => string
-): WorkflowStep[] {
+function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, currency?: string | null) => string): WorkflowStep[] {
   const isAssigned = Boolean(lead.assignedAt || lead.assignedToUser.id);
   const isQualified = Boolean(lead.qualifiedAt);
   const isConverted = Boolean(lead.convertedAt);
@@ -155,12 +235,12 @@ function leadWorkflowSteps(
       summary: lead.remarks ?? lead.qualificationNotes,
       details: [
         { label: "Lead No", value: lead.leadNo },
-        { label: "Contact", value: lead.contactName },
+        { label: "Contact", value: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.contactName },
         { label: "Mobile", value: lead.mobileNo },
         { label: "Email", value: lead.email },
         { label: "Source", value: lead.leadSource.name },
         { label: "Channel", value: lead.captureChannel.name },
-        { label: "Budget", value: formatBudget(lead.budgetMin, lead.budgetMax, lead.preferredCurrencyCode) },
+        { label: "Budget", value: formatBudget(lead.budgetMax, lead.preferredCurrencyCode) },
         { label: "Project", value: lead.preferredProjectCode },
         { label: "Unit Type", value: lead.preferredUnitType.name }
       ]
@@ -275,20 +355,83 @@ function leadWorkflowSteps(
   ];
 }
 
+const blankLeadForm: LeadFormValues = {
+  firstName: "",
+  lastName: "",
+  mobileNo: "",
+  whatsappNo: "",
+  email: "",
+  leadSourceRefId: "",
+  captureChannelRefId: "",
+  campaignId: "",
+  campaignNotes: "",
+  assignedToUserId: "",
+  dateGenerated: todayIsoDate(),
+  leadRatingRefId: "",
+  genderRefId: "",
+  dateOfBirth: "",
+  nationalityRefId: "",
+  countryRefId: "",
+  city: "",
+  currentResidenceCountryRefId: "",
+  buyerTypeRefId: "",
+  fundingSourceRefId: "",
+  budgetMax: "",
+  preferredCurrencyCode: "KES",
+  preferredProjectCode: "",
+  preferredLocationCode: "",
+  preferredUnitTypeRefId: "",
+  preferredBedroomRefId: "",
+  preferredViewRefId: "",
+  incomeRangeRefId: "",
+  acquisitionCost: "",
+  purchaseTimelineRefId: "",
+  qualificationNotes: "",
+  scoreTotal: "",
+  remarks: ""
+};
+
+const leadSourceToChannelFamilyMap: Record<string, string> = {
+  "digital marketing": "Digital Marketing",
+  "property portals": "Property Portal",
+  "broker channels": "Broker Channel",
+  referrals: "Referral",
+  "events & exhibitions": "Events",
+  "hospitality channels": "Hospitality",
+  "direct sales": "Direct Sales",
+  "strategic partners": "Strategic Partners",
+  "public relations": "Public Relations"
+};
+
+function resolveLeadChannelFamily(sourceName: string | null | undefined) {
+  if (!sourceName) {
+    return null;
+  }
+
+  const key = sourceName.trim().toLowerCase();
+  return leadSourceToChannelFamilyMap[key] ?? sourceName.trim();
+}
+
+function FieldLabel({ children, required = false }: { children: string; required?: boolean }) {
+  return <span className={required ? "crm-label crm-label-required" : "crm-label"}>{children}</span>;
+}
+
 function SelectField<TFormValues extends FieldValues>({
   label,
   name,
   options,
-  register
+  register,
+  required = false
 }: {
   label: string;
   name: Path<TFormValues>;
   options: ReferenceDataItem[];
   register: UseFormRegister<TFormValues>;
+  required?: boolean;
 }) {
   return (
     <label className="crm-field">
-      <span className="crm-label">{label}</span>
+      <FieldLabel required={required}>{label}</FieldLabel>
       <select className="crm-input" {...register(name)}>
         <option value="">Select</option>
         {options.map((option) => (
@@ -301,11 +444,70 @@ function SelectField<TFormValues extends FieldValues>({
   );
 }
 
-export function LeadsPage() {
-  const { formatInBase, baseCurrency, toBase } = useMoneyFormatter();
+function CampaignSelectField<TFormValues extends FieldValues>({
+  label,
+  name,
+  options,
+  register,
+  required = false
+}: {
+  label: string;
+  name: Path<TFormValues>;
+  options: LeadCampaignOption[];
+  register: UseFormRegister<TFormValues>;
+  required?: boolean;
+}) {
+  return (
+    <label className="crm-field">
+      <FieldLabel required={required}>{label}</FieldLabel>
+      <select className="crm-input" {...register(name)}>
+        <option value="">Select campaign</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
-  const formatLeadBudget = (min: number | null, max: number | null, currency?: string | null) =>
-    formatMoneyRange(toBase(min, currency), toBase(max, currency), baseCurrency);
+function FormSectionTitle({ children }: { children: string }) {
+  return <h4 className="crm-form-section-title crm-form-wide">{children}</h4>;
+}
+
+function UserSelectField<TFormValues extends FieldValues>({
+  label,
+  name,
+  options,
+  register,
+  required = false
+}: {
+  label: string;
+  name: Path<TFormValues>;
+  options: LeadAssignableUser[];
+  register: UseFormRegister<TFormValues>;
+  required?: boolean;
+}) {
+  return (
+    <label className="crm-field">
+      <FieldLabel required={required}>{label}</FieldLabel>
+      <select className="crm-input" {...register(name)}>
+        <option value="">Select owner</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function LeadsPage() {
+  const { formatInBase, baseCurrency } = useMoneyFormatter();
+
+  const formatLeadBudget = (max: number | null, currency?: string | null) => formatInBase(max, currency);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
@@ -313,16 +515,61 @@ export function LeadsPage() {
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
+  const [leadCreateModalOpen, setLeadCreateModalOpen] = useState(false);
+  const [leadDetailModalOpen, setLeadDetailModalOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
+    open: false,
+    title: "",
+    message: "",
+    variant: "info"
+  });
+  const [isValidatingLead, setIsValidatingLead] = useState(false);
+  const firstNameInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingFocusFieldRef = useRef<LeadFormFieldName | null>(null);
 
-  const leadSourcesQuery = useQuery({ queryKey: ["reference", "LEAD", "SOURCE"], queryFn: () => getReferenceFamily("LEAD", "SOURCE") });
+  const showNotice = (title: string, message: string, variant: NoticeState["variant"]) => {
+    setNoticeDialog({ open: true, title, message, variant });
+  };
+
+  const leadSourcesQuery = useQuery({ queryKey: ["reference", "LEAD", "CATEGORY"], queryFn: () => getReferenceFamily("LEAD", "CATEGORY") });
   const leadRatingsQuery = useQuery({ queryKey: ["reference", "LEAD", "RATING"], queryFn: () => getReferenceFamily("LEAD", "RATING") });
+  const gendersQuery = useQuery({ queryKey: ["reference", "PERSON", "GENDER"], queryFn: () => getReferenceFamily("PERSON", "GENDER") });
+  const nationalitiesQuery = useQuery({
+    queryKey: ["reference", "ORGANIZATION", "NATIONALITY"],
+    queryFn: () => getReferenceFamily("ORGANIZATION", "NATIONALITY")
+  });
+  const countriesQuery = useQuery({
+    queryKey: ["reference", "ORGANIZATION", "COUNTRY"],
+    queryFn: () => getReferenceFamily("ORGANIZATION", "COUNTRY")
+  });
   const buyerTypesQuery = useQuery({ queryKey: ["reference", "CUSTOMER", "BUYER_TYPE"], queryFn: () => getReferenceFamily("CUSTOMER", "BUYER_TYPE") });
   const fundingSourcesQuery = useQuery({ queryKey: ["reference", "CUSTOMER", "FUNDING_SOURCE"], queryFn: () => getReferenceFamily("CUSTOMER", "FUNDING_SOURCE") });
   const unitTypesQuery = useQuery({ queryKey: ["reference", "INVENTORY", "UNIT_TYPE"], queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE") });
+  const bedroomQuery = useQuery({
+    queryKey: ["reference", "INVENTORY", "BEDROOM_COUNT"],
+    queryFn: () => getReferenceFamily("INVENTORY", "BEDROOM_COUNT")
+  });
+  const viewTypeQuery = useQuery({
+    queryKey: ["reference", "INVENTORY", "VIEW_TYPE"],
+    queryFn: () => getReferenceFamily("INVENTORY", "VIEW_TYPE")
+  });
+  const incomeRangeQuery = useQuery({
+    queryKey: ["reference", "PERSON", "INCOME RANGE"],
+    queryFn: () => getReferenceFamily("PERSON", "INCOME RANGE")
+  });
   const timelinesQuery = useQuery({ queryKey: ["reference", "LEAD", "PURCHASE_TIMELINE"], queryFn: () => getReferenceFamily("LEAD", "PURCHASE_TIMELINE") });
-  const channelsQuery = useQuery({ queryKey: ["reference", "COMMUNICATION", "CHANNEL"], queryFn: () => getReferenceFamily("COMMUNICATION", "CHANNEL") });
+  const campaignsQuery = useQuery({
+    queryKey: ["leads", "campaigns"],
+    queryFn: listLeadCampaigns,
+    staleTime: 60_000
+  });
+  const assignableUsersQuery = useQuery({
+    queryKey: ["leads", "assignable-users"],
+    queryFn: listLeadAssignableUsers,
+    staleTime: 60_000
+  });
 
   const leadsQuery = useQuery({
     queryKey: ["leads", search, page],
@@ -346,38 +593,55 @@ export function LeadsPage() {
   });
 
   const createForm = useForm<LeadFormValues>({
-    defaultValues: {
-      leadTitle: "",
-      contactName: "",
-      mobileNo: "",
-      whatsappNo: "",
-      email: "",
-      leadSourceRefId: "",
-      captureChannelRefId: "",
-      leadRatingRefId: "",
-      buyerTypeRefId: "",
-      fundingSourceRefId: "",
-      budgetMin: "",
-      budgetMax: "",
-      preferredCurrencyCode: baseCurrency,
-      preferredProjectCode: "",
-      preferredLocationCode: "",
-      preferredUnitTypeRefId: "",
-      purchaseTimelineRefId: "",
-      qualificationNotes: "",
-      scoreTotal: "",
-      remarks: ""
-    }
+    defaultValues: { ...blankLeadForm, preferredCurrencyCode: baseCurrency }
   });
+
+  const closeNotice = () => {
+    setNoticeDialog((current) => ({ ...current, open: false }));
+
+    if (pendingFocusFieldRef.current) {
+      const fieldName = pendingFocusFieldRef.current;
+      pendingFocusFieldRef.current = null;
+      window.setTimeout(() => {
+        createForm.setFocus(fieldName);
+      }, 0);
+    }
+  };
+
+  const selectedLeadSourceRefId = createForm.watch("leadSourceRefId");
+  const selectedLeadSourceName = useMemo(
+    () => (leadSourcesQuery.data ?? []).find((item) => item.id === selectedLeadSourceRefId)?.level2Name ?? null,
+    [leadSourcesQuery.data, selectedLeadSourceRefId]
+  );
+  const selectedLeadChannelFamily = useMemo(
+    () => resolveLeadChannelFamily(selectedLeadSourceName),
+    [selectedLeadSourceName]
+  );
+  const channelsQuery = useQuery({
+    queryKey: ["reference", "LEAD", selectedLeadChannelFamily],
+    queryFn: () => getReferenceFamily("LEAD", selectedLeadChannelFamily ?? ""),
+    enabled: Boolean(selectedLeadChannelFamily),
+    staleTime: 60_000
+  });
+  const previousLeadSourceRef = useRef("");
 
   const qualifyForm = useForm<QualifyFormValues>({
     defaultValues: {
       leadRatingRefId: "",
+      genderRefId: "",
+      dateOfBirth: "",
+      nationalityRefId: "",
+      countryRefId: "",
+      city: "",
+      currentResidenceCountryRefId: "",
       buyerTypeRefId: "",
       fundingSourceRefId: "",
       purchaseTimelineRefId: "",
-      budgetMin: "",
       budgetMax: "",
+      preferredBedroomRefId: "",
+      preferredViewRefId: "",
+      incomeRangeRefId: "",
+      acquisitionCost: "",
       scoreTotal: "",
       scoreEngagement: "",
       scoreBehavior: "",
@@ -391,12 +655,39 @@ export function LeadsPage() {
     onSuccess: (lead) => {
       setErrorMessage(null);
       setSelectedLeadId(lead.id);
-      createForm.reset();
-      setIsCreateOpen(false);
+      createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
+      setLeadCreateModalOpen(false);
+      setLeadDetailModalOpen(true);
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
+      showNotice("Lead Created", `Lead ${lead.leadNo} was created successfully.`, "success");
     },
-    onError: () => setErrorMessage("Lead could not be created. Check required contact fields and reference values.")
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Lead could not be created. Check required fields and reference values.");
+      setErrorMessage(message);
+      showNotice("Lead Not Created", message, "error");
+    }
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: CreateLeadPayload }) => updateLead(id, payload),
+    onSuccess: (lead) => {
+      setErrorMessage(null);
+      setSelectedLeadId(lead.id);
+      setEditingLeadId(null);
+      createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
+      setLeadCreateModalOpen(false);
+      setLeadDetailModalOpen(true);
+      queryClient.setQueryData(["lead", lead.id], lead);
+      void queryClient.invalidateQueries({ queryKey: ["leads"] });
+      void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
+      showNotice("Lead Updated", `Lead ${lead.leadNo} was updated successfully.`, "success");
+    },
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Lead could not be updated.");
+      setErrorMessage(message);
+      showNotice("Lead Not Updated", message, "error");
+    }
   });
 
   const qualifyMutation = useMutation({
@@ -450,6 +741,135 @@ export function LeadsPage() {
   const selectedLead = leadDetailQuery.data;
   const selectedLeadNextAction = selectedLead ? leadNextAction(selectedLead) : null;
 
+  const loadLead = (lead: Lead) => {
+    setSelectedLeadId(lead.id);
+    setLeadDetailModalOpen(true);
+  };
+
+  const closeLeadDetailModal = () => {
+    setLeadDetailModalOpen(false);
+    setSelectedLeadId(null);
+  };
+
+  const closeLeadCreateModal = () => {
+    setLeadCreateModalOpen(false);
+    setEditingLeadId(null);
+    createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
+  };
+
+  const openCreateLeadModal = () => {
+    setEditingLeadId(null);
+    createForm.reset({
+      ...blankLeadForm,
+      preferredCurrencyCode: baseCurrency,
+      dateGenerated: todayIsoDate(),
+      assignedToUserId: user?.id ?? ""
+    });
+    setLeadCreateModalOpen(true);
+  };
+
+  useEffect(() => {
+    if (!leadCreateModalOpen) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeLeadCreateModal();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.setTimeout(() => firstNameInputRef.current?.focus(), 0);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [leadCreateModalOpen]);
+
+  useEffect(() => {
+    if (!selectedLeadSourceRefId) {
+      previousLeadSourceRef.current = "";
+      createForm.setValue("captureChannelRefId", "");
+      return;
+    }
+
+    if (previousLeadSourceRef.current && previousLeadSourceRef.current !== selectedLeadSourceRefId) {
+      createForm.setValue("captureChannelRefId", "");
+    }
+
+    previousLeadSourceRef.current = selectedLeadSourceRefId;
+  }, [createForm, selectedLeadSourceRefId]);
+
+  const openLeadEditModal = (lead: Lead) => {
+    setEditingLeadId(lead.id);
+    setSelectedLeadId(lead.id);
+    previousLeadSourceRef.current = lead.leadSource.id ?? "";
+    createForm.reset({
+      firstName: lead.firstName ?? lead.leadTitle ?? "",
+      lastName: lead.lastName ?? lead.contactName ?? "",
+      mobileNo: lead.mobileNo ?? "",
+      whatsappNo: lead.whatsappNo ?? "",
+      email: lead.email ?? "",
+      leadSourceRefId: lead.leadSource.id ?? "",
+      captureChannelRefId: lead.captureChannel.id ?? "",
+      campaignId: lead.campaign.id ?? "",
+      campaignNotes: lead.campaignNotes ?? "",
+      assignedToUserId: lead.assignedToUser.id ?? user?.id ?? "",
+      dateGenerated: lead.capturedAt?.slice(0, 10) ?? todayIsoDate(),
+      leadRatingRefId: lead.leadRating.id ?? "",
+      genderRefId: lead.gender.id ?? "",
+      dateOfBirth: lead.dateOfBirth?.slice(0, 10) ?? "",
+      nationalityRefId: lead.nationality.id ?? "",
+      countryRefId: lead.country.id ?? "",
+      city: lead.city ?? "",
+      currentResidenceCountryRefId: lead.currentResidenceCountry.id ?? "",
+      buyerTypeRefId: lead.buyerType.id ?? "",
+      fundingSourceRefId: lead.fundingSource.id ?? "",
+      budgetMax: lead.budgetMax == null ? "" : String(lead.budgetMax),
+      preferredCurrencyCode: lead.preferredCurrencyCode ?? baseCurrency,
+      preferredProjectCode: lead.preferredProjectCode ?? "",
+      preferredLocationCode: lead.preferredLocationCode ?? "",
+      preferredUnitTypeRefId: lead.preferredUnitType.id ?? "",
+      preferredBedroomRefId: lead.preferredBedroom.id ?? "",
+      preferredViewRefId: lead.preferredView.id ?? "",
+      incomeRangeRefId: lead.incomeRange.id ?? "",
+      acquisitionCost: lead.acquisitionCost == null ? "" : String(lead.acquisitionCost),
+      purchaseTimelineRefId: lead.purchaseTimeline.id ?? "",
+      qualificationNotes: lead.qualificationNotes ?? "",
+      scoreTotal: lead.scoreTotal == null ? "" : String(lead.scoreTotal),
+      remarks: lead.remarks ?? ""
+    });
+    setLeadCreateModalOpen(true);
+  };
+
+  useEffect(() => {
+    if (!selectedLead) {
+      return;
+    }
+
+    qualifyForm.reset({
+      leadRatingRefId: selectedLead.leadRating.id ?? "",
+      genderRefId: selectedLead.gender.id ?? "",
+      dateOfBirth: selectedLead.dateOfBirth?.slice(0, 10) ?? "",
+      nationalityRefId: selectedLead.nationality.id ?? "",
+      countryRefId: selectedLead.country.id ?? "",
+      city: selectedLead.city ?? "",
+      currentResidenceCountryRefId: selectedLead.currentResidenceCountry.id ?? "",
+      buyerTypeRefId: selectedLead.buyerType.id ?? "",
+      fundingSourceRefId: selectedLead.fundingSource.id ?? "",
+      purchaseTimelineRefId: selectedLead.purchaseTimeline.id ?? "",
+      budgetMax: selectedLead.budgetMax == null ? "" : String(selectedLead.budgetMax),
+      preferredBedroomRefId: selectedLead.preferredBedroom.id ?? "",
+      preferredViewRefId: selectedLead.preferredView.id ?? "",
+      incomeRangeRefId: selectedLead.incomeRange.id ?? "",
+      acquisitionCost: selectedLead.acquisitionCost == null ? "" : String(selectedLead.acquisitionCost),
+      scoreTotal: selectedLead.scoreTotal == null ? "" : String(selectedLead.scoreTotal),
+      scoreEngagement: "",
+      scoreBehavior: "",
+      scoreFinancial: "",
+      qualificationNotes: selectedLead.qualificationNotes ?? ""
+    });
+  }, [qualifyForm, selectedLead]);
+
   const stats = useMemo(() => {
     const leads = leadsQuery.data?.items ?? [];
     const assigned = leads.filter((lead) => lead.assignedToUser.id).length;
@@ -462,7 +882,57 @@ export function LeadsPage() {
     return { total: leadsQuery.data?.pagination.total ?? 0, assigned, qualified, averageScore };
   }, [leadsQuery.data]);
 
-  const onCreate = createForm.handleSubmit((values) => createMutation.mutate(toCreatePayload(values)));
+  const onCreate = createForm.handleSubmit(async (values) => {
+    const campaignHasOptions = (campaignsQuery.data ?? []).length > 0;
+    const validation = validateMandatoryLeadFields(values);
+    if (!validation.valid) {
+      const message = buildLeadValidationMessage(validation);
+      const invalidField = getFirstInvalidLeadField(values, campaignHasOptions);
+      if (invalidField) {
+        pendingFocusFieldRef.current = invalidField;
+      }
+      setErrorMessage(message);
+      showNotice("Required Fields Missing", message, "error");
+      return;
+    }
+
+    setIsValidatingLead(true);
+    setErrorMessage(null);
+
+    try {
+      const duplicate = await checkLeadDuplicate({
+        firstName: values.firstName.trim(),
+        lastName: values.lastName.trim(),
+        mobileNo: values.mobileNo.trim(),
+        email: values.email.trim(),
+        excludeLeadId: editingLeadId ?? undefined
+      });
+
+      if (duplicate.isDuplicate && duplicate.lead) {
+        const message =
+          "A lead already exists with the same First Name, Last Name, Mobile, and Email.\n" +
+          "All four values must match (names and email ignore case; mobile ignores spaces and symbols).\n" +
+          `Existing lead: ${duplicate.lead.leadNo}`;
+        setErrorMessage(message);
+        showNotice("Duplicate Lead Detected", message, "error");
+        return;
+      }
+
+      const payload = toCreatePayload(values);
+      if (editingLeadId) {
+        updateMutation.mutate({ id: editingLeadId, payload });
+        return;
+      }
+
+      createMutation.mutate(payload);
+    } catch (error) {
+      const message = getApiErrorMessage(error, "Could not validate lead details. Please try again.");
+      setErrorMessage(message);
+      showNotice("Validation Failed", message, "error");
+    } finally {
+      setIsValidatingLead(false);
+    }
+  });
   const onQualify = qualifyForm.handleSubmit((values) => {
     if (!selectedLeadId || !selectedLead?.assignedToUser.id) {
       setErrorMessage("Assign the lead before completing qualification.");
@@ -474,6 +944,9 @@ export function LeadsPage() {
 
   const leadRows = leadsQuery.data?.items ?? [];
   const leadPagination = leadsQuery.data?.pagination ?? { limit: pageSize, offset: 0, total: 0 };
+  const firstNameRegister = createForm.register("firstName");
+  const campaignOptions = campaignsQuery.data ?? [];
+  const campaignHasOptions = campaignOptions.length > 0;
 
   return (
     <div className="crm-workspace crm-leads-workspace">
@@ -482,8 +955,12 @@ export function LeadsPage() {
           <p className="crm-eyebrow">Lead Management</p>
           <h2>Lead Inbox</h2>
         </div>
-        <button className="crm-primary-button crm-fit-button" onClick={() => setIsCreateOpen((value) => !value)} type="button">
-          {isCreateOpen ? "Close Form" : "Create Lead"}
+        <button
+          className="crm-primary-button crm-fit-button"
+          onClick={openCreateLeadModal}
+          type="button"
+        >
+          Create Lead
         </button>
       </section>
 
@@ -520,7 +997,7 @@ export function LeadsPage() {
         </div>
 
         <div className="crm-table-wrap crm-leads-record-grid">
-          <table className="crm-table">
+          <table className="crm-table crm-leads-inbox-table">
             <thead>
               <tr>
                 <th>S.No.</th>
@@ -532,6 +1009,7 @@ export function LeadsPage() {
                 <th>Score</th>
                 <th>Captured</th>
                 <th>Assigned</th>
+                <th>Act.</th>
               </tr>
             </thead>
             <tbody>
@@ -539,15 +1017,15 @@ export function LeadsPage() {
                 <tr
                   className={selectedLeadId === lead.id ? "is-selected" : ""}
                   key={lead.id}
-                  onClick={() => setSelectedLeadId(lead.id)}
+                  onClick={() => loadLead(lead)}
                 >
                   <td>{String(getRowSerialNumber(page, pageSize, index)).padStart(2, "0")}</td>
                   <td>
                     <strong>{lead.leadNo}</strong>
-                    <span>{lead.leadTitle ?? "Lead"}</span>
+                    <span>{lead.firstName ?? lead.leadTitle ?? "Lead"}</span>
                   </td>
                   <td>
-                    <strong>{lead.contactName ?? "Unnamed lead"}</strong>
+                    <strong>{[lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.contactName || "Unnamed lead"}</strong>
                     <span>{lead.mobileNo ?? lead.email ?? "-"}</span>
                   </td>
                   <td>{lead.leadSource.name ?? "-"}</td>
@@ -556,11 +1034,28 @@ export function LeadsPage() {
                   <td>{lead.scoreTotal ?? "-"}</td>
                   <td>{formatDate(lead.capturedAt)}</td>
                   <td>{lead.assignedToUser.name ?? "Unassigned"}</td>
+                  <td className="crm-leads-action-cell">
+                    <button
+                      aria-label={`Edit ${lead.leadNo}`}
+                      className="crm-icon-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openLeadEditModal(lead);
+                      }}
+                      title="Edit lead"
+                      type="button"
+                    >
+                      <svg aria-hidden="true" className="crm-icon-button-svg" viewBox="0 0 20 20">
+                        <path d="M13.586 3.586a2 2 0 0 1 2.828 2.828l-9.5 9.5a1 1 0 0 1-.39.242l-3.2 1.067a.5.5 0 0 1-.632-.632l1.067-3.2a1 1 0 0 1 .242-.39l9.5-9.5Z" />
+                        <path d="M12.172 5l2.828 2.828" />
+                      </svg>
+                    </button>
+                  </td>
                 </tr>
               ))}
               {leadRows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={9}>
+                  <td className="crm-empty-cell" colSpan={10}>
                     No leads found.
                   </td>
                 </tr>
@@ -577,198 +1072,346 @@ export function LeadsPage() {
         />
       </section>
 
-      <section className="crm-panel crm-lead-detail-wide">
-          <h3>Lead Detail</h3>
-          {selectedLead ? (
-            <>
-              <div className="crm-detail-title">
-                <div>
-                  <strong>{selectedLead.contactName ?? selectedLead.leadNo}</strong>
-                  <span>{selectedLead.leadNo}</span>
-                </div>
-                <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
+      {leadCreateModalOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section aria-labelledby="lead-create-title" aria-modal="true" className="crm-modal crm-management-modal crm-lead-modal" role="dialog">
+            <div className="crm-panel-header crm-lead-modal-header">
+              <div>
+                <h3 id="lead-create-title">{editingLeadId ? "Edit Lead" : "Create Lead"}</h3>
+                <p className="crm-muted-text">Fields marked with <span className="crm-label-required-inline">*</span> are required.</p>
               </div>
-              <WorkflowTracker steps={leadWorkflowSteps(selectedLead, formatLeadBudget)} />
-              <dl className="crm-detail-list">
-                <div>
-                  <dt>Phone</dt>
-                  <dd>{selectedLead.mobileNo ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Email</dt>
-                  <dd>{selectedLead.email ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Budget</dt>
-                  <dd>
-                    {formatLeadBudget(selectedLead.budgetMin, selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Timeline</dt>
-                  <dd>{selectedLead.purchaseTimeline.name ?? "-"}</dd>
-                </div>
-                <div>
-                  <dt>Assigned</dt>
-                  <dd>{selectedLead.assignedToUser.name ?? "Unassigned"}</dd>
-                </div>
-                <div>
-                  <dt>Qualified</dt>
-                  <dd>{formatDate(selectedLead.qualifiedAt)}</dd>
-                </div>
-              </dl>
+            </div>
 
-              {selectedLeadNextAction ? (
-                <section className="crm-next-action">
-                  <div>
-                    <span className="crm-label">Next Action</span>
-                    <strong>{selectedLeadNextAction.title}</strong>
-                    <p>{selectedLeadNextAction.summary}</p>
-                  </div>
-                  <div>
-                    <span className="crm-label">Data Needed</span>
-                    <p>{selectedLeadNextAction.dataNeeded}</p>
-                  </div>
-                </section>
-              ) : null}
+            <form className="crm-lead-modal-form" onSubmit={onCreate}>
+              <div className="crm-lead-modal-body">
+                <div className="crm-form crm-two-col">
+                  <FormSectionTitle>Contact</FormSectionTitle>
+                  <label className="crm-field">
+                    <FieldLabel required>First Name</FieldLabel>
+                    <input
+                      className="crm-input"
+                      {...firstNameRegister}
+                      ref={(element) => {
+                        firstNameRegister.ref(element);
+                        firstNameInputRef.current = element;
+                      }}
+                    />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel required>Last Name</FieldLabel>
+                    <input className="crm-input" {...createForm.register("lastName")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel required>Mobile</FieldLabel>
+                    <input className="crm-input" {...createForm.register("mobileNo")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel required>Email</FieldLabel>
+                    <input className="crm-input" type="email" {...createForm.register("email")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel>WhatsApp</FieldLabel>
+                    <input className="crm-input" {...createForm.register("whatsappNo")} />
+                  </label>
+                  <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={createForm.register} />
 
-              <button
-                className={`crm-full-button ${!selectedLead.assignedToUser.id ? "crm-primary-button" : "crm-secondary-button"}`}
-                disabled={assignMutation.isPending || !user?.id || Boolean(selectedLead.assignedToUser.id)}
-                onClick={() => assignMutation.mutate(selectedLead.id)}
-                type="button"
-              >
-                {selectedLead.assignedToUser.id ? "Assigned" : assignMutation.isPending ? "Assigning..." : "Assign to me"}
-              </button>
+                  <FormSectionTitle>Source & Campaign</FormSectionTitle>
+                  <SelectField label="Lead Source" name="leadSourceRefId" options={leadSourcesQuery.data ?? []} register={createForm.register} required />
+                  <SelectField
+                    label="Lead Source Category"
+                    name="captureChannelRefId"
+                    options={channelsQuery.data ?? []}
+                    register={createForm.register}
+                    required
+                  />
+                  {campaignHasOptions ? (
+                    <CampaignSelectField
+                      label="Campaign Name"
+                      name="campaignId"
+                      options={campaignOptions}
+                      register={createForm.register}
+                      required
+                    />
+                  ) : (
+                    <label className="crm-field">
+                      <FieldLabel required>Campaign Name</FieldLabel>
+                      <input className="crm-input" placeholder="Enter campaign name" {...createForm.register("campaignNotes")} />
+                    </label>
+                  )}
+                  <UserSelectField
+                    label="Lead Owner"
+                    name="assignedToUserId"
+                    options={assignableUsersQuery.data ?? []}
+                    register={createForm.register}
+                    required
+                  />
+                  {campaignHasOptions ? (
+                    <label className="crm-field crm-form-wide">
+                      <FieldLabel>Campaign Notes</FieldLabel>
+                      <input className="crm-input" placeholder="Optional if campaign is selected above" {...createForm.register("campaignNotes")} />
+                    </label>
+                  ) : (
+                    <p className="crm-muted-text crm-field-note crm-form-wide">
+                      Campaign list is not configured yet, so campaign name is captured as text.
+                    </p>
+                  )}
+                  <label className="crm-field">
+                    <FieldLabel required>Date Generated</FieldLabel>
+                    <input className="crm-input" type="date" {...createForm.register("dateGenerated")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel required>Marketing Cost Allocation</FieldLabel>
+                    <input className="crm-input" inputMode="decimal" {...createForm.register("acquisitionCost")} />
+                  </label>
 
-              <button
-                className={`crm-full-button ${selectedLead.qualifiedAt && !selectedLead.convertedAt ? "crm-primary-button" : "crm-secondary-button"}`}
-                disabled={convertMutation.isPending || !selectedLead.qualifiedAt || Boolean(selectedLead.convertedAt)}
-                onClick={() => convertMutation.mutate(selectedLead.id)}
-                type="button"
-              >
-                {selectedLead.convertedAt ? "Converted" : convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
-              </button>
-              {!selectedLead.qualifiedAt ? (
-                <p className="crm-action-note">Convert is available after this lead is qualified.</p>
-              ) : null}
+                  <FormSectionTitle>Profile & Preferences</FormSectionTitle>
+                  <SelectField label="Nationality" name="nationalityRefId" options={nationalitiesQuery.data ?? []} register={createForm.register} required />
+                  <SelectField label="Country" name="countryRefId" options={countriesQuery.data ?? []} register={createForm.register} required />
+                  <SelectField
+                    label="Current Residence"
+                    name="currentResidenceCountryRefId"
+                    options={countriesQuery.data ?? []}
+                    register={createForm.register}
+                  />
+                  <label className="crm-field">
+                    <FieldLabel>Date of Birth</FieldLabel>
+                    <input className="crm-input" type="date" {...createForm.register("dateOfBirth")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel>City</FieldLabel>
+                    <input className="crm-input" {...createForm.register("city")} />
+                  </label>
+                  <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Unit Type" name="preferredUnitTypeRefId" options={unitTypesQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Bedrooms" name="preferredBedroomRefId" options={bedroomQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Preferred View" name="preferredViewRefId" options={viewTypeQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={createForm.register} />
+                  <label className="crm-field">
+                    <FieldLabel>Budget</FieldLabel>
+                    <input className="crm-input" {...createForm.register("budgetMax")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel>Currency</FieldLabel>
+                    <input className="crm-input" {...createForm.register("preferredCurrencyCode")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel>Project Code</FieldLabel>
+                    <input className="crm-input" {...createForm.register("preferredProjectCode")} />
+                  </label>
+                  <label className="crm-field">
+                    <FieldLabel>Score</FieldLabel>
+                    <input className="crm-input" {...createForm.register("scoreTotal")} />
+                  </label>
+                  <label className="crm-field crm-form-wide">
+                    <FieldLabel>Qualification Notes</FieldLabel>
+                    <textarea className="crm-input crm-textarea" {...createForm.register("qualificationNotes")} />
+                  </label>
+                </div>
+              </div>
 
-              {selectedLead.convertedAt ? (
-                <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
-                  Continue in Opportunities
+              <div className="crm-modal-actions crm-modal-actions-sticky">
+                <button className="crm-secondary-button crm-fit-button" onClick={closeLeadCreateModal} type="button">
+                  Close
                 </button>
-              ) : null}
-
-              {selectedLead.qualifiedAt ? (
-                <section className="crm-activity-list">
-                  <h4>Qualification Completed</h4>
-                  <p className="crm-muted-text">
-                    Qualified by {selectedLead.qualifiedByUser.name ?? "CRM user"} on {formatDate(selectedLead.qualifiedAt)}.
-                  </p>
-                </section>
-              ) : (
-                <form className="crm-form crm-compact-form" onSubmit={onQualify}>
-                  <h4>Qualify</h4>
-                  {!selectedLead.assignedToUser.id ? (
-                    <p className="crm-action-note">Assign the lead first, then qualification can be completed.</p>
-                  ) : null}
-                  <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
-                  <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
-                  <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
-                  <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
-                  <div className="crm-two-col">
-                    <label className="crm-field">
-                      <span className="crm-label">Budget Min</span>
-                      <input className="crm-input" {...qualifyForm.register("budgetMin")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Budget Max</span>
-                      <input className="crm-input" {...qualifyForm.register("budgetMax")} />
-                    </label>
-                  </div>
-                  <label className="crm-field">
-                    <span className="crm-label">Score</span>
-                    <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
-                  </label>
-                  <label className="crm-field">
-                    <span className="crm-label">Notes</span>
-                    <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
-                  </label>
-                  <button className="crm-primary-button" disabled={qualifyMutation.isPending || !selectedLead.assignedToUser.id} type="submit">
-                    {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
-                  </button>
-                </form>
-              )}
-            </>
-          ) : (
-            <p className="crm-muted-text">Select a lead to view details and qualification actions.</p>
-          )}
-      </section>
-
-      {isCreateOpen ? (
-        <section className="crm-panel">
-          <div className="crm-panel-header">
-            <h3>Create Lead</h3>
-            <span className="crm-muted-text">Contact name, mobile, email, or existing customer is required.</span>
-          </div>
-          <form className="crm-form crm-lead-form" onSubmit={onCreate}>
-            <label className="crm-field">
-              <span className="crm-label">Lead Title</span>
-              <input className="crm-input" {...createForm.register("leadTitle")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Contact Name</span>
-              <input className="crm-input" {...createForm.register("contactName")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Mobile</span>
-              <input className="crm-input" {...createForm.register("mobileNo")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">WhatsApp</span>
-              <input className="crm-input" {...createForm.register("whatsappNo")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Email</span>
-              <input className="crm-input" {...createForm.register("email")} />
-            </label>
-            <SelectField label="Source" name="leadSourceRefId" options={leadSourcesQuery.data ?? []} register={createForm.register} />
-            <SelectField label="Channel" name="captureChannelRefId" options={channelsQuery.data ?? []} register={createForm.register} />
-            <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={createForm.register} />
-            <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={createForm.register} />
-            <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={createForm.register} />
-            <SelectField label="Unit Type" name="preferredUnitTypeRefId" options={unitTypesQuery.data ?? []} register={createForm.register} />
-            <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={createForm.register} />
-            <label className="crm-field">
-              <span className="crm-label">Budget Min</span>
-              <input className="crm-input" {...createForm.register("budgetMin")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Budget Max</span>
-              <input className="crm-input" {...createForm.register("budgetMax")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Currency</span>
-              <input className="crm-input" {...createForm.register("preferredCurrencyCode")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Project Code</span>
-              <input className="crm-input" {...createForm.register("preferredProjectCode")} />
-            </label>
-            <label className="crm-field crm-form-wide">
-              <span className="crm-label">Qualification Notes</span>
-              <textarea className="crm-input crm-textarea" {...createForm.register("qualificationNotes")} />
-            </label>
-            <label className="crm-field">
-              <span className="crm-label">Score</span>
-              <input className="crm-input" {...createForm.register("scoreTotal")} />
-            </label>
-            <button className="crm-primary-button crm-form-action" disabled={createMutation.isPending} type="submit">
-              {createMutation.isPending ? "Creating..." : "Create Lead"}
-            </button>
-          </form>
-        </section>
+                <button
+                  className="crm-primary-button crm-fit-button"
+                  disabled={createMutation.isPending || updateMutation.isPending || isValidatingLead}
+                  type="submit"
+                >
+                  {editingLeadId
+                    ? updateMutation.isPending
+                      ? "Updating..."
+                      : "Update Lead"
+                    : createMutation.isPending
+                      ? "Creating..."
+                      : "Create Lead"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       ) : null}
+
+      {leadDetailModalOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-lead-detail-modal" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>Lead Detail</h3>
+                {selectedLead ? (
+                  <p className="crm-muted-text">
+                    {selectedLead.leadNo} · {[selectedLead.firstName, selectedLead.lastName].filter(Boolean).join(" ") || selectedLead.contactName || "Unnamed lead"}
+                  </p>
+                ) : null}
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={closeLeadDetailModal} type="button">
+                Close
+              </button>
+            </div>
+
+            {leadDetailQuery.isLoading ? (
+              <p className="crm-muted-text">Loading lead details...</p>
+            ) : selectedLead ? (
+              <>
+                <div className="crm-detail-title">
+                  <div>
+                    <strong>{[selectedLead.firstName, selectedLead.lastName].filter(Boolean).join(" ") || selectedLead.contactName || selectedLead.leadNo}</strong>
+                    <span>{selectedLead.leadNo}</span>
+                  </div>
+                  <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
+                </div>
+                <WorkflowTracker steps={leadWorkflowSteps(selectedLead, formatLeadBudget)} />
+                <dl className="crm-detail-list">
+                  <div>
+                    <dt>Phone</dt>
+                    <dd>{selectedLead.mobileNo ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Email</dt>
+                    <dd>{selectedLead.email ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Budget</dt>
+                    <dd>
+                      {formatLeadBudget(selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Timeline</dt>
+                    <dd>{selectedLead.purchaseTimeline.name ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Assigned</dt>
+                    <dd>{selectedLead.assignedToUser.name ?? "Unassigned"}</dd>
+                  </div>
+                  <div>
+                    <dt>Qualified</dt>
+                    <dd>{formatDate(selectedLead.qualifiedAt)}</dd>
+                  </div>
+                </dl>
+
+                {selectedLeadNextAction ? (
+                  <section className="crm-next-action">
+                    <div>
+                      <span className="crm-label">Next Action</span>
+                      <strong>{selectedLeadNextAction.title}</strong>
+                      <p>{selectedLeadNextAction.summary}</p>
+                    </div>
+                    <div>
+                      <span className="crm-label">Data Needed</span>
+                      <p>{selectedLeadNextAction.dataNeeded}</p>
+                    </div>
+                  </section>
+                ) : null}
+
+                <div className="crm-lead-detail-actions">
+                  <button
+                    className={`crm-full-button ${!selectedLead.assignedToUser.id ? "crm-primary-button" : "crm-secondary-button"}`}
+                    disabled={assignMutation.isPending || !user?.id || Boolean(selectedLead.assignedToUser.id)}
+                    onClick={() => assignMutation.mutate(selectedLead.id)}
+                    type="button"
+                  >
+                    {selectedLead.assignedToUser.id ? "Assigned" : assignMutation.isPending ? "Assigning..." : "Assign to me"}
+                  </button>
+
+                  <button
+                    className={`crm-full-button ${selectedLead.qualifiedAt && !selectedLead.convertedAt ? "crm-primary-button" : "crm-secondary-button"}`}
+                    disabled={convertMutation.isPending || !selectedLead.qualifiedAt || Boolean(selectedLead.convertedAt)}
+                    onClick={() => convertMutation.mutate(selectedLead.id)}
+                    type="button"
+                  >
+                    {selectedLead.convertedAt ? "Converted" : convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
+                  </button>
+                </div>
+                {!selectedLead.qualifiedAt ? (
+                  <p className="crm-action-note">Convert is available after this lead is qualified.</p>
+                ) : null}
+
+                {selectedLead.convertedAt ? (
+                  <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
+                    Continue in Opportunities
+                  </button>
+                ) : null}
+
+                {selectedLead.qualifiedAt ? (
+                  <section className="crm-activity-list">
+                    <h4>Qualification Completed</h4>
+                    <p className="crm-muted-text">
+                      Qualified by {selectedLead.qualifiedByUser.name ?? "CRM user"} on {formatDate(selectedLead.qualifiedAt)}.
+                    </p>
+                  </section>
+                ) : (
+                  <form className="crm-form crm-compact-form" onSubmit={onQualify}>
+                    <h4>Qualify</h4>
+                    {!selectedLead.assignedToUser.id ? (
+                      <p className="crm-action-note">Assign the lead first, then qualification can be completed.</p>
+                    ) : null}
+                    <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Nationality" name="nationalityRefId" options={nationalitiesQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Country" name="countryRefId" options={countriesQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField
+                      label="Current Residence"
+                      name="currentResidenceCountryRefId"
+                      options={countriesQuery.data ?? []}
+                      register={qualifyForm.register}
+                    />
+                    <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Bedrooms" name="preferredBedroomRefId" options={bedroomQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Preferred View" name="preferredViewRefId" options={viewTypeQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={qualifyForm.register} />
+                    <label className="crm-field">
+                      <span className="crm-label">Date of Birth</span>
+                      <input className="crm-input" type="date" {...qualifyForm.register("dateOfBirth")} />
+                    </label>
+                    <label className="crm-field">
+                      <span className="crm-label">City</span>
+                      <input className="crm-input" {...qualifyForm.register("city")} />
+                    </label>
+                    <div className="crm-two-col">
+                      <label className="crm-field">
+                        <span className="crm-label">Budget</span>
+                        <input className="crm-input" {...qualifyForm.register("budgetMax")} />
+                      </label>
+                      <label className="crm-field">
+                        <span className="crm-label">Acquisition Cost</span>
+                        <input className="crm-input" {...qualifyForm.register("acquisitionCost")} />
+                      </label>
+                    </div>
+                    <label className="crm-field">
+                      <span className="crm-label">Score</span>
+                      <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
+                    </label>
+                    <label className="crm-field">
+                      <span className="crm-label">Notes</span>
+                      <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
+                    </label>
+                    <button className="crm-primary-button" disabled={qualifyMutation.isPending || !selectedLead.assignedToUser.id} type="submit">
+                      {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
+                    </button>
+                  </form>
+                )}
+              </>
+            ) : (
+              <p className="crm-muted-text">Lead details could not be loaded.</p>
+            )}
+          </section>
+        </div>
+      ) : null}
+
+      <FormNoticeDialog
+        confirmLabel="OK"
+        message={noticeDialog.message}
+        onClose={closeNotice}
+        open={noticeDialog.open}
+        title={noticeDialog.title}
+        variant={noticeDialog.variant}
+      />
     </div>
   );
 }
