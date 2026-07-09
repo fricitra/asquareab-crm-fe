@@ -42,6 +42,13 @@ type NoticeState = {
   variant: "error" | "success" | "info";
 };
 
+const referenceQueryDefaults = {
+  staleTime: 30 * 60 * 1000,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+  refetchOnMount: false
+} as const;
+
 type LeadFormValues = {
   firstName: string;
   lastName: string;
@@ -63,6 +70,13 @@ type LeadFormValues = {
   currentResidenceCountryRefId: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
+  purposeOfPurchaseRefId: string;
+  decisionMakerStatusRefId: string;
+  affordabilityStatusRefId: string;
+  lastInteractionAt: string;
+  lastInteractionTypeRefId: string;
+  interactionOutcomeRefId: string;
+  interactionCount: string;
   budgetMax: string;
   preferredCurrencyCode: string;
   preferredProjectCode: string;
@@ -88,6 +102,13 @@ type QualifyFormValues = {
   currentResidenceCountryRefId: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
+  purposeOfPurchaseRefId: string;
+  decisionMakerStatusRefId: string;
+  affordabilityStatusRefId: string;
+  lastInteractionAt: string;
+  lastInteractionTypeRefId: string;
+  interactionOutcomeRefId: string;
+  interactionCount: string;
   purchaseTimelineRefId: string;
   budgetMax: string;
   preferredBedroomRefId: string;
@@ -141,6 +162,13 @@ function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
     currentResidenceCountryRefId: pickString(values.currentResidenceCountryRefId),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
+    purposeOfPurchaseRefId: pickString(values.purposeOfPurchaseRefId),
+    decisionMakerStatusRefId: pickString(values.decisionMakerStatusRefId),
+    affordabilityStatusRefId: pickString(values.affordabilityStatusRefId),
+    lastInteractionAt: pickString(values.lastInteractionAt),
+    lastInteractionTypeRefId: pickString(values.lastInteractionTypeRefId),
+    interactionOutcomeRefId: pickString(values.interactionOutcomeRefId),
+    interactionCount: pickNumber(values.interactionCount),
     budgetMax: pickNumber(values.budgetMax),
     preferredCurrencyCode: pickString(values.preferredCurrencyCode),
     preferredProjectCode: pickString(values.preferredProjectCode),
@@ -168,6 +196,13 @@ function toQualifyPayload(values: QualifyFormValues): QualifyLeadPayload {
     currentResidenceCountryRefId: pickString(values.currentResidenceCountryRefId),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
+    purposeOfPurchaseRefId: pickString(values.purposeOfPurchaseRefId),
+    decisionMakerStatusRefId: pickString(values.decisionMakerStatusRefId),
+    affordabilityStatusRefId: pickString(values.affordabilityStatusRefId),
+    lastInteractionAt: pickString(values.lastInteractionAt),
+    lastInteractionTypeRefId: pickString(values.lastInteractionTypeRefId),
+    interactionOutcomeRefId: pickString(values.interactionOutcomeRefId),
+    interactionCount: pickNumber(values.interactionCount),
     purchaseTimelineRefId: pickString(values.purchaseTimelineRefId),
     budgetMax: pickNumber(values.budgetMax),
     preferredBedroomRefId: pickString(values.preferredBedroomRefId),
@@ -277,7 +312,7 @@ function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, curren
     {
       id: "converted",
       title: "Converted",
-      status: isConverted ? "completed" : isQualified ? "current" : "next",
+      status: isConverted ? "completed" : "next",
       timestamp: lead.convertedAt,
       user: lead.convertedByUser.name,
       role: "CRM User",
@@ -376,6 +411,13 @@ const blankLeadForm: LeadFormValues = {
   currentResidenceCountryRefId: "",
   buyerTypeRefId: "",
   fundingSourceRefId: "",
+  purposeOfPurchaseRefId: "",
+  decisionMakerStatusRefId: "",
+  affordabilityStatusRefId: "",
+  lastInteractionAt: "",
+  lastInteractionTypeRefId: "",
+  interactionOutcomeRefId: "",
+  interactionCount: "",
   budgetMax: "",
   preferredCurrencyCode: "KES",
   preferredProjectCode: "",
@@ -518,6 +560,7 @@ export function LeadsPage() {
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
   const [leadCreateModalOpen, setLeadCreateModalOpen] = useState(false);
   const [leadDetailModalOpen, setLeadDetailModalOpen] = useState(false);
+  const [assignTargetUserId, setAssignTargetUserId] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
@@ -533,42 +576,108 @@ export function LeadsPage() {
     setNoticeDialog({ open: true, title, message, variant });
   };
 
-  const leadSourcesQuery = useQuery({ queryKey: ["reference", "LEAD", "CATEGORY"], queryFn: () => getReferenceFamily("LEAD", "CATEGORY") });
-  const leadRatingsQuery = useQuery({ queryKey: ["reference", "LEAD", "RATING"], queryFn: () => getReferenceFamily("LEAD", "RATING") });
-  const gendersQuery = useQuery({ queryKey: ["reference", "PERSON", "GENDER"], queryFn: () => getReferenceFamily("PERSON", "GENDER") });
+  const isLeadEditorOpen = leadCreateModalOpen || leadDetailModalOpen;
+
+  const leadSourcesQuery = useQuery({
+    queryKey: ["reference", "LEAD", "CATEGORY"],
+    queryFn: () => getReferenceFamily("LEAD", "CATEGORY"),
+    ...referenceQueryDefaults
+  });
+  const leadRatingsQuery = useQuery({
+    queryKey: ["reference", "LEAD", "RATING"],
+    queryFn: () => getReferenceFamily("LEAD", "RATING"),
+    ...referenceQueryDefaults
+  });
+  const gendersQuery = useQuery({
+    queryKey: ["reference", "PERSON", "GENDER"],
+    queryFn: () => getReferenceFamily("PERSON", "GENDER"),
+    ...referenceQueryDefaults
+  });
   const nationalitiesQuery = useQuery({
     queryKey: ["reference", "ORGANIZATION", "NATIONALITY"],
-    queryFn: () => getReferenceFamily("ORGANIZATION", "NATIONALITY")
+    queryFn: () => getReferenceFamily("ORGANIZATION", "NATIONALITY"),
+    ...referenceQueryDefaults
   });
   const countriesQuery = useQuery({
     queryKey: ["reference", "ORGANIZATION", "COUNTRY"],
-    queryFn: () => getReferenceFamily("ORGANIZATION", "COUNTRY")
+    queryFn: () => getReferenceFamily("ORGANIZATION", "COUNTRY"),
+    ...referenceQueryDefaults
   });
-  const buyerTypesQuery = useQuery({ queryKey: ["reference", "CUSTOMER", "BUYER_TYPE"], queryFn: () => getReferenceFamily("CUSTOMER", "BUYER_TYPE") });
-  const fundingSourcesQuery = useQuery({ queryKey: ["reference", "CUSTOMER", "FUNDING_SOURCE"], queryFn: () => getReferenceFamily("CUSTOMER", "FUNDING_SOURCE") });
-  const unitTypesQuery = useQuery({ queryKey: ["reference", "INVENTORY", "UNIT_TYPE"], queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE") });
+  const buyerTypesQuery = useQuery({
+    queryKey: ["reference", "CUSTOMER", "BUYER_TYPE"],
+    queryFn: () => getReferenceFamily("CUSTOMER", "BUYER_TYPE"),
+    ...referenceQueryDefaults
+  });
+  const fundingSourcesQuery = useQuery({
+    queryKey: ["reference", "CUSTOMER", "FUNDING_SOURCE"],
+    queryFn: () => getReferenceFamily("CUSTOMER", "FUNDING_SOURCE"),
+    ...referenceQueryDefaults
+  });
+  const purposeOfPurchaseQuery = useQuery({
+    queryKey: ["reference", "LEAD", "PURPOSE_OF_PURCHASE"],
+    queryFn: () => getReferenceFamily("LEAD", "PURPOSE_OF_PURCHASE"),
+    ...referenceQueryDefaults
+  });
+  const decisionMakerStatusQuery = useQuery({
+    queryKey: ["reference", "LEAD", "DECISION_MAKER_STATUS"],
+    queryFn: () => getReferenceFamily("LEAD", "DECISION_MAKER_STATUS"),
+    ...referenceQueryDefaults
+  });
+  const affordabilityStatusQuery = useQuery({
+    queryKey: ["reference", "LEAD", "AFFORDABILITY_STATUS"],
+    queryFn: () => getReferenceFamily("LEAD", "AFFORDABILITY_STATUS"),
+    ...referenceQueryDefaults
+  });
+  const interactionTypeQuery = useQuery({
+    queryKey: ["reference", "LEAD", "INTERACTION_TYPE"],
+    queryFn: () => getReferenceFamily("LEAD", "INTERACTION_TYPE"),
+    ...referenceQueryDefaults
+  });
+  const interactionOutcomeQuery = useQuery({
+    queryKey: ["reference", "LEAD", "INTERACTION_OUTCOME"],
+    queryFn: () => getReferenceFamily("LEAD", "INTERACTION_OUTCOME"),
+    ...referenceQueryDefaults
+  });
+  const unitTypesQuery = useQuery({
+    queryKey: ["reference", "INVENTORY", "UNIT_TYPE"],
+    queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE"),
+    ...referenceQueryDefaults
+  });
   const bedroomQuery = useQuery({
     queryKey: ["reference", "INVENTORY", "BEDROOM_COUNT"],
-    queryFn: () => getReferenceFamily("INVENTORY", "BEDROOM_COUNT")
+    queryFn: () => getReferenceFamily("INVENTORY", "BEDROOM_COUNT"),
+    ...referenceQueryDefaults
   });
   const viewTypeQuery = useQuery({
     queryKey: ["reference", "INVENTORY", "VIEW_TYPE"],
-    queryFn: () => getReferenceFamily("INVENTORY", "VIEW_TYPE")
+    queryFn: () => getReferenceFamily("INVENTORY", "VIEW_TYPE"),
+    ...referenceQueryDefaults
   });
   const incomeRangeQuery = useQuery({
     queryKey: ["reference", "PERSON", "INCOME RANGE"],
-    queryFn: () => getReferenceFamily("PERSON", "INCOME RANGE")
+    queryFn: () => getReferenceFamily("PERSON", "INCOME RANGE"),
+    ...referenceQueryDefaults
   });
-  const timelinesQuery = useQuery({ queryKey: ["reference", "LEAD", "PURCHASE_TIMELINE"], queryFn: () => getReferenceFamily("LEAD", "PURCHASE_TIMELINE") });
+  const timelinesQuery = useQuery({
+    queryKey: ["reference", "LEAD", "PURCHASE_TIMELINE"],
+    queryFn: () => getReferenceFamily("LEAD", "PURCHASE_TIMELINE"),
+    ...referenceQueryDefaults
+  });
   const campaignsQuery = useQuery({
     queryKey: ["leads", "campaigns"],
     queryFn: listLeadCampaigns,
-    staleTime: 60_000
+    staleTime: 30 * 60 * 1000,
+    enabled: isLeadEditorOpen,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
   });
   const assignableUsersQuery = useQuery({
     queryKey: ["leads", "assignable-users"],
     queryFn: listLeadAssignableUsers,
-    staleTime: 60_000
+    staleTime: 30 * 60 * 1000,
+    enabled: isLeadEditorOpen,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
   });
 
   const leadsQuery = useQuery({
@@ -579,7 +688,9 @@ export function LeadsPage() {
         limit: pageSize,
         offset: (page - 1) * pageSize
       }),
-    staleTime: 10_000
+    staleTime: 10_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
   });
 
   useEffect(() => {
@@ -589,7 +700,9 @@ export function LeadsPage() {
   const leadDetailQuery = useQuery({
     queryKey: ["lead", selectedLeadId],
     queryFn: () => getLead(selectedLeadId ?? ""),
-    enabled: Boolean(selectedLeadId)
+    enabled: Boolean(selectedLeadId && leadDetailModalOpen),
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
   });
 
   const createForm = useForm<LeadFormValues>({
@@ -620,8 +733,8 @@ export function LeadsPage() {
   const channelsQuery = useQuery({
     queryKey: ["reference", "LEAD", selectedLeadChannelFamily],
     queryFn: () => getReferenceFamily("LEAD", selectedLeadChannelFamily ?? ""),
-    enabled: Boolean(selectedLeadChannelFamily),
-    staleTime: 60_000
+    enabled: Boolean(selectedLeadChannelFamily && leadCreateModalOpen),
+    ...referenceQueryDefaults
   });
   const previousLeadSourceRef = useRef("");
 
@@ -699,16 +812,16 @@ export function LeadsPage() {
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
     },
-    onError: () => setErrorMessage("Lead could not be qualified. Check budget, score, and reference values.")
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Lead could not be qualified. Complete the qualification checklist and try again.");
+      setErrorMessage(message);
+      showNotice("Qualification Failed", message, "error");
+    }
   });
 
   const assignMutation = useMutation({
-    mutationFn: (id: string) => {
-      if (!user?.id) {
-        throw new Error("Signed-in user is missing");
-      }
-
-      return assignLead(id, user.id, "Assigned from lead detail");
+    mutationFn: ({ leadId, assignedToUserId }: { leadId: string; assignedToUserId: string }) => {
+      return assignLead(leadId, assignedToUserId, "Assigned from lead detail");
     },
     onSuccess: (lead) => {
       setErrorMessage(null);
@@ -716,8 +829,17 @@ export function LeadsPage() {
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
+      const assigneeName =
+        lead.assignedToUser.name ??
+        (assignableUsersQuery.data ?? []).find((option) => option.id === lead.assignedToUser.id)?.name ??
+        "selected user";
+      showNotice("Lead Assigned", `Lead assigned to ${assigneeName}.`, "success");
     },
-    onError: () => setErrorMessage("Lead could not be assigned to the signed-in user.")
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Lead could not be assigned. Please check assignee eligibility and try again.");
+      setErrorMessage(message);
+      showNotice("Assignment Failed", message, "error");
+    }
   });
 
   const convertMutation = useMutation({
@@ -728,18 +850,33 @@ export function LeadsPage() {
       }),
     onSuccess: (opportunity) => {
       setErrorMessage(null);
+      void queryClient.invalidateQueries({ queryKey: ["lead", selectedLeadId] });
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-      navigate("/opportunities", { replace: false });
-      window.setTimeout(() => {
-        setSearch(opportunity.opportunityNo);
-      }, 0);
+      showNotice(
+        "Lead Converted",
+        `Lead converted successfully. Opportunity ${opportunity.opportunityNo} is ready.`,
+        "success"
+      );
     },
-    onError: () => setErrorMessage("Lead could not be converted. Qualify the lead before conversion.")
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Lead could not be converted. Qualify the lead before conversion.");
+      setErrorMessage(message);
+      showNotice("Conversion Failed", message, "error");
+    }
   });
 
   const selectedLead = leadDetailQuery.data;
   const selectedLeadNextAction = selectedLead ? leadNextAction(selectedLead) : null;
+
+  useEffect(() => {
+    if (!selectedLead) {
+      setAssignTargetUserId("");
+      return;
+    }
+
+    setAssignTargetUserId(selectedLead.assignedToUser.id ?? "");
+  }, [selectedLead]);
 
   const loadLead = (lead: Lead) => {
     setSelectedLeadId(lead.id);
@@ -824,6 +961,13 @@ export function LeadsPage() {
       currentResidenceCountryRefId: lead.currentResidenceCountry.id ?? "",
       buyerTypeRefId: lead.buyerType.id ?? "",
       fundingSourceRefId: lead.fundingSource.id ?? "",
+      purposeOfPurchaseRefId: lead.purposeOfPurchase.id ?? "",
+      decisionMakerStatusRefId: lead.decisionMakerStatus.id ?? "",
+      affordabilityStatusRefId: lead.affordabilityStatus.id ?? "",
+      lastInteractionAt: lead.lastInteractionAt ? lead.lastInteractionAt.slice(0, 16) : "",
+      lastInteractionTypeRefId: lead.lastInteractionType.id ?? "",
+      interactionOutcomeRefId: lead.interactionOutcome.id ?? "",
+      interactionCount: lead.interactionCount == null ? "" : String(lead.interactionCount),
       budgetMax: lead.budgetMax == null ? "" : String(lead.budgetMax),
       preferredCurrencyCode: lead.preferredCurrencyCode ?? baseCurrency,
       preferredProjectCode: lead.preferredProjectCode ?? "",
@@ -856,6 +1000,13 @@ export function LeadsPage() {
       currentResidenceCountryRefId: selectedLead.currentResidenceCountry.id ?? "",
       buyerTypeRefId: selectedLead.buyerType.id ?? "",
       fundingSourceRefId: selectedLead.fundingSource.id ?? "",
+      purposeOfPurchaseRefId: selectedLead.purposeOfPurchase.id ?? "",
+      decisionMakerStatusRefId: selectedLead.decisionMakerStatus.id ?? "",
+      affordabilityStatusRefId: selectedLead.affordabilityStatus.id ?? "",
+      lastInteractionAt: selectedLead.lastInteractionAt ? selectedLead.lastInteractionAt.slice(0, 16) : "",
+      lastInteractionTypeRefId: selectedLead.lastInteractionType.id ?? "",
+      interactionOutcomeRefId: selectedLead.interactionOutcome.id ?? "",
+      interactionCount: selectedLead.interactionCount == null ? "" : String(selectedLead.interactionCount),
       purchaseTimelineRefId: selectedLead.purchaseTimeline.id ?? "",
       budgetMax: selectedLead.budgetMax == null ? "" : String(selectedLead.budgetMax),
       preferredBedroomRefId: selectedLead.preferredBedroom.id ?? "",
@@ -1184,11 +1335,24 @@ export function LeadsPage() {
                   <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Purpose of Purchase" name="purposeOfPurchaseRefId" options={purposeOfPurchaseQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Decision Maker Status" name="decisionMakerStatusRefId" options={decisionMakerStatusQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Affordability Assessment" name="affordabilityStatusRefId" options={affordabilityStatusQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Unit Type" name="preferredUnitTypeRefId" options={unitTypesQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Bedrooms" name="preferredBedroomRefId" options={bedroomQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Preferred View" name="preferredViewRefId" options={viewTypeQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={createForm.register} />
+                  <label className="crm-field">
+                    <FieldLabel>Last Interaction</FieldLabel>
+                    <input className="crm-input" type="datetime-local" {...createForm.register("lastInteractionAt")} />
+                  </label>
+                  <SelectField label="Interaction Type" name="lastInteractionTypeRefId" options={interactionTypeQuery.data ?? []} register={createForm.register} />
+                  <SelectField label="Interaction Outcome" name="interactionOutcomeRefId" options={interactionOutcomeQuery.data ?? []} register={createForm.register} />
+                  <label className="crm-field">
+                    <FieldLabel>Interaction Count</FieldLabel>
+                    <input className="crm-input" inputMode="numeric" {...createForm.register("interactionCount")} />
+                  </label>
                   <label className="crm-field">
                     <FieldLabel>Budget</FieldLabel>
                     <input className="crm-input" {...createForm.register("budgetMax")} />
@@ -1308,17 +1472,27 @@ export function LeadsPage() {
                 ) : null}
 
                 <div className="crm-lead-detail-actions">
+                  <label className="crm-field crm-lead-action-field">
+                    <span className="crm-label">Assign To User</span>
+                    <select className="crm-input crm-lead-action-control" onChange={(event) => setAssignTargetUserId(event.target.value)} value={assignTargetUserId}>
+                      <option value="">Select user</option>
+                      {(assignableUsersQuery.data ?? []).map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <button
-                    className={`crm-full-button ${!selectedLead.assignedToUser.id ? "crm-primary-button" : "crm-secondary-button"}`}
-                    disabled={assignMutation.isPending || !user?.id || Boolean(selectedLead.assignedToUser.id)}
-                    onClick={() => assignMutation.mutate(selectedLead.id)}
+                    className="crm-primary-button crm-lead-action-button"
+                    disabled={assignMutation.isPending || !assignTargetUserId || assignTargetUserId === selectedLead.assignedToUser.id}
+                    onClick={() => assignMutation.mutate({ leadId: selectedLead.id, assignedToUserId: assignTargetUserId })}
                     type="button"
                   >
-                    {selectedLead.assignedToUser.id ? "Assigned" : assignMutation.isPending ? "Assigning..." : "Assign to me"}
+                    {assignMutation.isPending ? "Assigning..." : "Assign Lead"}
                   </button>
-
                   <button
-                    className={`crm-full-button ${selectedLead.qualifiedAt && !selectedLead.convertedAt ? "crm-primary-button" : "crm-secondary-button"}`}
+                    className={`${selectedLead.qualifiedAt && !selectedLead.convertedAt ? "crm-primary-button" : "crm-secondary-button"} crm-lead-action-button`}
                     disabled={convertMutation.isPending || !selectedLead.qualifiedAt || Boolean(selectedLead.convertedAt)}
                     onClick={() => convertMutation.mutate(selectedLead.id)}
                     type="button"
@@ -1345,7 +1519,6 @@ export function LeadsPage() {
                   </section>
                 ) : (
                   <form className="crm-form crm-compact-form" onSubmit={onQualify}>
-                    <h4>Qualify</h4>
                     {!selectedLead.assignedToUser.id ? (
                       <p className="crm-action-note">Assign the lead first, then qualification can be completed.</p>
                     ) : null}
@@ -1361,10 +1534,43 @@ export function LeadsPage() {
                     />
                     <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
                     <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField label="Purpose of Purchase" name="purposeOfPurchaseRefId" options={purposeOfPurchaseQuery.data ?? []} register={qualifyForm.register} />
+                    <SelectField
+                      label="Decision Maker Status"
+                      name="decisionMakerStatusRefId"
+                      options={decisionMakerStatusQuery.data ?? []}
+                      register={qualifyForm.register}
+                    />
+                    <SelectField
+                      label="Affordability Assessment"
+                      name="affordabilityStatusRefId"
+                      options={affordabilityStatusQuery.data ?? []}
+                      register={qualifyForm.register}
+                    />
                     <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
                     <SelectField label="Bedrooms" name="preferredBedroomRefId" options={bedroomQuery.data ?? []} register={qualifyForm.register} />
                     <SelectField label="Preferred View" name="preferredViewRefId" options={viewTypeQuery.data ?? []} register={qualifyForm.register} />
                     <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={qualifyForm.register} />
+                    <label className="crm-field">
+                      <span className="crm-label">Last Interaction</span>
+                      <input className="crm-input" type="datetime-local" {...qualifyForm.register("lastInteractionAt")} />
+                    </label>
+                    <SelectField
+                      label="Interaction Type"
+                      name="lastInteractionTypeRefId"
+                      options={interactionTypeQuery.data ?? []}
+                      register={qualifyForm.register}
+                    />
+                    <SelectField
+                      label="Interaction Outcome"
+                      name="interactionOutcomeRefId"
+                      options={interactionOutcomeQuery.data ?? []}
+                      register={qualifyForm.register}
+                    />
+                    <label className="crm-field">
+                      <span className="crm-label">Interaction Count</span>
+                      <input className="crm-input" inputMode="numeric" {...qualifyForm.register("interactionCount")} />
+                    </label>
                     <label className="crm-field">
                       <span className="crm-label">Date of Birth</span>
                       <input className="crm-input" type="date" {...qualifyForm.register("dateOfBirth")} />

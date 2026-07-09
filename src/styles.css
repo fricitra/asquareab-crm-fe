@@ -1454,9 +1454,23 @@ textarea {
 
 .crm-lead-detail-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, auto) minmax(240px, 1fr);
+  align-items: end;
   gap: 12px;
   margin-top: 18px;
+}
+
+.crm-lead-action-field {
+  gap: 8px;
+}
+
+.crm-lead-action-control,
+.crm-lead-action-button {
+  min-height: 44px;
+}
+
+.crm-lead-action-button {
+  width: 100%;
 }
 
 .crm-management-modal .crm-input {
@@ -2352,6 +2366,7 @@ textarea {
   .crm-unit-catalogue-grid,
   .crm-currency-grid,
   .crm-next-action,
+  .crm-lead-detail-actions,
   .crm-dashboard-activity article,
   .crm-unit-detail-modal .crm-unit-builder {
     grid-template-columns: 1fr;
