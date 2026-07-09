@@ -853,11 +853,11 @@ export function LeadsPage() {
       void queryClient.invalidateQueries({ queryKey: ["lead", selectedLeadId] });
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
-      showNotice(
-        "Lead Converted",
-        `Lead converted successfully. Opportunity ${opportunity.opportunityNo} is ready.`,
-        "success"
-      );
+      queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
+      closeLeadDetailModal();
+      navigate(`/opportunities?selected=${opportunity.id}`, {
+        state: { convertNotice: opportunity.opportunityNo }
+      });
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be converted. Qualify the lead before conversion.");
