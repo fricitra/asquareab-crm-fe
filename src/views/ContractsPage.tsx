@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
+import { useLocation, useSearchParams } from "react-router-dom";
+import { getApiErrorMessage } from "../api/auth";
 import { listCurrencies } from "../api/currencies";
 import {
   cancelContract,
@@ -18,6 +20,8 @@ import {
 import { listReservations } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
+import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
@@ -45,6 +49,13 @@ type ErpFormValues = {
   erpContractId: string;
   errorMessage: string;
   remarks: string;
+};
+
+type ContractHandoffState = {
+  fromProposal?: string;
+  contractValue?: number;
+  currencyCode?: string;
+  remarks?: string;
 };
 
 function pickString(value: string) {
@@ -207,11 +218,16 @@ function contractWorkflowSteps(
 
 export function ContractsPage() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const processedHandoffRef = useRef<string | null>(null);
+  const handoffNoteRef = useRef<string | null>(null);
   const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
+  const [contractDetailModalOpen, setContractDetailModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -253,12 +269,15 @@ export function ContractsPage() {
   const contractDetailQuery = useQuery({
     queryKey: ["contract", selectedContractId],
     queryFn: () => getContract(selectedContractId ?? ""),
-    enabled: Boolean(selectedContractId)
+    enabled: Boolean(selectedContractId && contractDetailModalOpen),
+    refetchOnWindowFocus: false
   });
   const reservationsQuery = useQuery({
     queryKey: ["reservations", "contract-select"],
     queryFn: () => listReservations({ limit: DROPDOWN_LIST_LIMIT }),
-    staleTime: 10_000
+    enabled: createOpen,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
   });
   const currenciesQuery = useQuery({
     queryKey: ["currencies", "contract-dropdown"],
@@ -269,10 +288,37 @@ export function ContractsPage() {
   const refreshContract = (contract: Contract, successMessage: string) => {
     setMessage(successMessage);
     setSelectedContractId(contract.id);
+    setContractDetailModalOpen(true);
     queryClient.setQueryData(["contract", contract.id], contract);
     void queryClient.invalidateQueries({ queryKey: ["contracts"] });
     void queryClient.invalidateQueries({ queryKey: ["contract", contract.id] });
     void queryClient.invalidateQueries({ queryKey: ["reservations"] });
+  };
+
+  const loadContract = (contractId: string) => {
+    setSelectedContractId(contractId);
+    setContractDetailModalOpen(true);
+  };
+
+  const closeContractDetailModal = () => {
+    setContractDetailModalOpen(false);
+    setSelectedContractId(null);
+  };
+
+  const openCreateModal = (
+    reservationId?: string,
+    prefill?: { contractValue?: number; currencyCode?: string; remarks?: string; fromProposal?: string }
+  ) => {
+    handoffNoteRef.current = prefill?.fromProposal
+      ? `Opened from accepted proposal ${prefill.fromProposal}.`
+      : null;
+    contractForm.reset({
+      reservationId: reservationId ?? "",
+      contractValue: prefill?.contractValue != null ? String(prefill.contractValue) : "",
+      currencyCode: prefill?.currencyCode ?? defaultContractCurrency,
+      remarks: prefill?.remarks ?? ""
+    });
+    setCreateOpen(true);
   };
 
   const createMutation = useMutation({
@@ -285,10 +331,11 @@ export function ContractsPage() {
       }),
     onSuccess: (contract) => {
       setCreateOpen(false);
+      handoffNoteRef.current = null;
       refreshContract(contract, "Contract draft is ready.");
       contractForm.reset({ reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" });
     },
-    onError: () => setMessage("Contract could not be created. Use an approved reservation.")
+    onError: (error) => setMessage(getApiErrorMessage(error) || "Contract could not be created. Use an approved reservation.")
   });
 
   const issueMutation = useMutation({
@@ -355,7 +402,7 @@ export function ContractsPage() {
 
   const contractRows = contractsQuery.data?.items ?? [];
   const currencyRows = currenciesQuery.data?.items ?? [];
-  const selectedContract = contractDetailQuery.data;
+  const selectedContract = contractDetailQuery.data ?? contractRows.find((contract) => contract.id === selectedContractId) ?? null;
   const selectedContractNextAction = selectedContract ? contractNextAction(selectedContract) : null;
   const selectedContractIsClosed = selectedContract?.erpHandoffStatus === "HANDED_OFF";
   const availableReservations =
@@ -364,15 +411,14 @@ export function ContractsPage() {
     ) ?? [];
 
   const stats = useMemo(() => {
-    const total = contractsQuery.data?.pagination.total ?? 0;
-    const draft = contractRows.filter((contract) => contract.contractStatus.code === "DRAFT").length;
-    const signed = contractRows.filter((contract) => contract.contractStatus.code === "SIGNED").length;
-    const value = contractRows.reduce(
-      (sum, contract) => sum + toBase(contract.contractValue, contract.currencyCode),
-      0
-    );
-    return { total, draft, signed, value };
-  }, [contractRows, contractsQuery.data?.pagination.total, toBase]);
+    const summary = contractsQuery.data?.summary;
+    return {
+      total: contractsQuery.data?.pagination.total ?? 0,
+      draft: summary?.draft ?? 0,
+      signed: summary?.signed ?? 0,
+      value: summary?.value ?? 0
+    };
+  }, [contractsQuery.data]);
 
   const onContractSubmit = contractForm.handleSubmit((values) => {
     if (!values.reservationId) {
@@ -397,14 +443,51 @@ export function ContractsPage() {
     failedMutation.mutate({ contractId: selectedContract.id, values });
   });
 
+  useEffect(() => {
+    const createFor = searchParams.get("createFor");
+    if (!createFor || processedHandoffRef.current === createFor) {
+      return;
+    }
+
+    processedHandoffRef.current = createFor;
+    const handoff = (location.state as ContractHandoffState | null) ?? null;
+    openCreateModal(createFor, handoff ?? undefined);
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("createFor");
+    setSearchParams(nextParams, { replace: true });
+  }, [location.state, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!contractDetailModalOpen) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !createOpen) {
+        closeContractDetailModal();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [contractDetailModalOpen, createOpen]);
+
+  const selectedReservation = availableReservations.find(
+    (reservation) => reservation.id === contractForm.watch("reservationId")
+  );
+
   return (
     <div className="crm-workspace">
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Contracts</p>
-          <h2>Contract Workspace</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Contract Workspace</h2>
+            <CurrencyBadge />
+          </div>
         </div>
-        <button className="crm-primary-button" onClick={() => setCreateOpen(true)} type="button">
+        <button className="crm-primary-button" onClick={() => openCreateModal()} type="button">
           New Contract
         </button>
       </section>
@@ -432,47 +515,90 @@ export function ContractsPage() {
 
       {createOpen ? (
         <div className="crm-modal-backdrop" role="presentation">
-      <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
-        <div className="crm-panel-header">
-          <h3>Create Contract</h3>
-          <button className="crm-secondary-button" onClick={() => setCreateOpen(false)} type="button">Close</button>
-        </div>
-        <form className="crm-form crm-reservation-form" onSubmit={onContractSubmit}>
-          <label className="crm-field">
-            <span className="crm-label">Approved Reservation</span>
-            <select className="crm-input" {...contractForm.register("reservationId")}>
-              <option value="">Select reservation</option>
-              {availableReservations.map((reservation) => (
-                <option key={reservation.id} value={reservation.id}>
-                  {reservation.reservationNo} - {reservation.customer.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Contract Value</span>
-            <input className="crm-input" {...contractForm.register("contractValue")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Currency</span>
-            <select className="crm-input" {...contractForm.register("currencyCode")}>
-              <option value="">Select currency</option>
-              {currencyRows.map((currency) => (
-                <option key={currency.id} value={currency.currencyCode}>
-                  {currency.currencyCode} - {currency.currencyName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field crm-form-wide">
-            <span className="crm-label">Remarks</span>
-            <input className="crm-input" {...contractForm.register("remarks")} />
-          </label>
-          <button className="crm-primary-button crm-form-action" disabled={createMutation.isPending} type="submit">
-            {createMutation.isPending ? "Creating..." : "Create Contract"}
-          </button>
-        </form>
-      </section>
+          <section
+            aria-modal="true"
+            className="crm-modal crm-management-modal crm-reservation-modal crm-contract-modal"
+            role="dialog"
+          >
+            <div className="crm-panel-header">
+              <div>
+                <h3>Create Contract</h3>
+                <p className="crm-muted-text">Create a draft contract from an approved reservation.</p>
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
+                Close
+              </button>
+            </div>
+            <form className="crm-reservation-modal-form" onSubmit={onContractSubmit}>
+              <div className="crm-reservation-modal-body">
+                {handoffNoteRef.current ? (
+                  <p className="crm-proposal-prefill-note crm-form-wide">{handoffNoteRef.current}</p>
+                ) : null}
+                <div className="crm-reservation-modal-fields">
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">
+                      Approved Reservation <span className="crm-label-required-inline">*</span>
+                    </span>
+                    <select className="crm-input" {...contractForm.register("reservationId")}>
+                      <option value="">Select reservation</option>
+                      {availableReservations.map((reservation) => (
+                        <option key={reservation.id} value={reservation.id}>
+                          {reservation.reservationNo} - {reservation.customer.name} - {reservation.unit.unitCode}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Contract Value</span>
+                    <input className="crm-input" inputMode="decimal" {...contractForm.register("contractValue")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Currency</span>
+                    <select className="crm-input" {...contractForm.register("currencyCode")}>
+                      <option value="">Select currency</option>
+                      {currencyRows.map((currency) => (
+                        <option key={currency.id} value={currency.currencyCode}>
+                          {currency.currencyCode} - {currency.currencyName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">Remarks</span>
+                    <textarea className="crm-input crm-textarea crm-opportunity-textarea" {...contractForm.register("remarks")} />
+                  </label>
+                </div>
+                {selectedReservation ? (
+                  <dl className="crm-detail-list crm-inline-preview">
+                    <div>
+                      <dt>Customer</dt>
+                      <dd>{selectedReservation.customer.name ?? "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Unit</dt>
+                      <dd>{selectedReservation.unit.unitCode ?? "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Opportunity</dt>
+                      <dd>{selectedReservation.opportunity.opportunityNo ?? "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Reservation Amount</dt>
+                      <dd>{formatInBase(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
+                    </div>
+                  </dl>
+                ) : null}
+              </div>
+              <div className="crm-modal-actions crm-modal-actions-sticky">
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
+                  Close
+                </button>
+                <button className="crm-primary-button crm-fit-button" disabled={createMutation.isPending} type="submit">
+                  {createMutation.isPending ? "Creating..." : "Create Contract"}
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
       ) : null}
 
@@ -501,9 +627,9 @@ export function ContractsPage() {
             <tbody>
               {contractRows.map((contract) => (
                 <tr
-                  className={selectedContractId === contract.id ? "is-selected" : ""}
+                  className={selectedContractId === contract.id && contractDetailModalOpen ? "is-selected" : ""}
                   key={contract.id}
-                  onClick={() => setSelectedContractId(contract.id)}
+                  onClick={() => loadContract(contract.id)}
                 >
                   <td>
                     <strong>{contract.contractNo}</strong>
@@ -535,223 +661,290 @@ export function ContractsPage() {
         />
       </section>
 
-      <section className="crm-panel crm-lead-detail-wide">
-        <h3>Contract Detail</h3>
-        {selectedContract ? (
-          <>
-            <div className="crm-detail-title">
+      {contractDetailModalOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section
+            aria-modal="true"
+            className="crm-modal crm-management-modal crm-lead-detail-modal crm-opportunity-detail-modal"
+            role="dialog"
+          >
+            <div className="crm-panel-header">
               <div>
-                <strong>{selectedContract.customer.name}</strong>
-                <span>{selectedContract.contractNo}</span>
+                <h3>Contract Detail</h3>
+                <p className="crm-muted-text">{selectedContract?.contractNo ?? "Loading contract..."}</p>
               </div>
-              <span className="crm-status-pill">{selectedContract.contractStatus.name}</span>
+              <button className="crm-secondary-button crm-fit-button" onClick={closeContractDetailModal} type="button">
+                Close
+              </button>
             </div>
-            <WorkflowTracker steps={contractWorkflowSteps(selectedContract, formatInBase)} />
-            <dl className="crm-detail-list">
-              <div>
-                <dt>Reservation</dt>
-                <dd>{selectedContract.reservation.reservationNo}</dd>
-              </div>
-              <div>
-                <dt>Opportunity</dt>
-                <dd>{selectedContract.opportunity.opportunityNo ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>Project</dt>
-                <dd>{selectedContract.project.projectCode}</dd>
-              </div>
-              <div>
-                <dt>Unit</dt>
-                <dd>{selectedContract.unit.unitCode}</dd>
-              </div>
-              <div>
-                <dt>Value</dt>
-                <dd>{formatInBase(selectedContract.contractValue, selectedContract.currencyCode)}</dd>
-              </div>
-              <div>
-                <dt>ERP Handoff</dt>
-                <dd>{selectedContract.erpHandoffStatus}</dd>
-              </div>
-            </dl>
 
-            {selectedContractNextAction ? (
-              <section className="crm-next-action">
-                <div>
-                  <span className="crm-label">Next Action</span>
-                  <strong>{selectedContractNextAction.title}</strong>
-                  <p>{selectedContractNextAction.summary}</p>
+            {contractDetailQuery.isLoading && !selectedContract ? (
+              <p className="crm-muted-text crm-opportunity-detail-body">Loading contract details...</p>
+            ) : selectedContract ? (
+              <div className="crm-opportunity-detail-body">
+                <div className="crm-detail-title">
+                  <div>
+                    <strong>{selectedContract.customer.name}</strong>
+                    <span>{selectedContract.contractNo}</span>
+                  </div>
+                  <span className="crm-status-pill">{selectedContract.contractStatus.name}</span>
                 </div>
-                <div>
-                  <span className="crm-label">Data Needed</span>
-                  <p>{selectedContractNextAction.dataNeeded}</p>
-                </div>
-              </section>
-            ) : null}
-
-            {!selectedContractIsClosed ? (
-              <>
-                <button
-                  className={`crm-full-button ${selectedContract.contractStatus.code === "DRAFT" ? "crm-primary-button" : "crm-secondary-button"}`}
-                  disabled={selectedContract.contractStatus.code !== "DRAFT" || issueMutation.isPending}
-                  onClick={() => issueMutation.mutate(selectedContract.id)}
-                  type="button"
-                >
-                  Issue Contract
-                </button>
-                <button
-                  className={`crm-full-button ${selectedContract.contractStatus.code === "ISSUED" ? "crm-primary-button" : "crm-secondary-button"}`}
-                  disabled={selectedContract.contractStatus.code !== "ISSUED" || signMutation.isPending}
-                  onClick={() => signMutation.mutate(selectedContract.id)}
-                  type="button"
-                >
-                  Sign Contract
-                </button>
-                <button
-                  className="crm-secondary-button crm-full-button"
-                  disabled={selectedContract.contractStatus.code === "CANCELLED" || cancelMutation.isPending}
-                  onClick={() => cancelMutation.mutate(selectedContract.id)}
-                  type="button"
-                >
-                  Cancel Contract
-                </button>
-              </>
-            ) : null}
-
-            <section className="crm-action-grid">
-              {!selectedContractIsClosed ? (
-                <form className="crm-form crm-compact-form" onSubmit={onPaymentPlanSubmit}>
-                  <h4>Payment Plan</h4>
-                  <label className="crm-field">
-                    <span className="crm-label">Plan Name</span>
-                    <input className="crm-input" {...paymentPlanForm.register("planName")} />
-                  </label>
-                  <div className="crm-two-col">
-                    <label className="crm-field">
-                      <span className="crm-label">Line 1</span>
-                      <input className="crm-input" {...paymentPlanForm.register("line1Label")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Amount</span>
-                      <input className="crm-input" {...paymentPlanForm.register("line1Amount")} />
-                    </label>
+                <WorkflowTracker steps={contractWorkflowSteps(selectedContract, formatInBase)} />
+                <dl className="crm-detail-list">
+                  <div>
+                    <dt>Reservation</dt>
+                    <dd>{selectedContract.reservation.reservationNo}</dd>
                   </div>
-                  <div className="crm-two-col">
-                    <label className="crm-field">
-                      <span className="crm-label">Due Date</span>
-                      <input className="crm-input" type="date" {...paymentPlanForm.register("line1DueDate")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Percent</span>
-                      <input className="crm-input" {...paymentPlanForm.register("line1Percent")} />
-                    </label>
+                  <div>
+                    <dt>Opportunity</dt>
+                    <dd>{selectedContract.opportunity.opportunityNo ?? "-"}</dd>
                   </div>
-                  <div className="crm-two-col">
-                    <label className="crm-field">
-                      <span className="crm-label">Line 2</span>
-                      <input className="crm-input" {...paymentPlanForm.register("line2Label")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Amount</span>
-                      <input className="crm-input" {...paymentPlanForm.register("line2Amount")} />
-                    </label>
+                  <div>
+                    <dt>Project</dt>
+                    <dd>{selectedContract.project.projectCode}</dd>
                   </div>
-                  <div className="crm-two-col">
-                    <label className="crm-field">
-                      <span className="crm-label">Due Date</span>
-                      <input className="crm-input" type="date" {...paymentPlanForm.register("line2DueDate")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Percent</span>
-                      <input className="crm-input" {...paymentPlanForm.register("line2Percent")} />
-                    </label>
+                  <div>
+                    <dt>Unit</dt>
+                    <dd>{selectedContract.unit.unitCode}</dd>
                   </div>
-                  <button className="crm-primary-button" disabled={paymentPlanMutation.isPending} type="submit">
-                    Save Payment Plan
-                  </button>
-                </form>
-              ) : null}
+                  <div>
+                    <dt>Value</dt>
+                    <dd>{formatInBase(selectedContract.contractValue, selectedContract.currencyCode)}</dd>
+                  </div>
+                  <div>
+                    <dt>ERP Handoff</dt>
+                    <dd>{selectedContract.erpHandoffStatus}</dd>
+                  </div>
+                </dl>
 
-              <section className="crm-activity-list">
-                <h4>Saved Payment Plans</h4>
-                {(selectedContract.paymentPlans ?? []).map((plan) => (
-                  <article key={plan.id}>
-                    <strong>{plan.planName}</strong>
-                    <span>{plan.planCode}</span>
-                    {plan.lines.map((line) => (
-                      <p key={line.id}>
-                        {line.sequenceNo}. {line.milestoneLabel ?? "Milestone"} - {formatInBase(line.amount, plan.currencyCode)}
-                      </p>
-                    ))}
-                  </article>
-                ))}
-                {(selectedContract.paymentPlans ?? []).length === 0 ? <p className="crm-muted-text">No payment plan saved.</p> : null}
-              </section>
-
-              <form className="crm-form crm-compact-form">
-                <h4>ERP Handoff</h4>
-                <p className="crm-muted-text">Status: {selectedContract.erpHandoffStatus}</p>
-                {selectedContract.erpHandoffStatus === "HANDED_OFF" ? (
+                {selectedContractNextAction ? (
                   <section className="crm-next-action">
                     <div>
-                      <span className="crm-label">Close-Off Stage</span>
-                      <strong>Handed Off</strong>
-                      <p>ERP has accepted the contract payload. CRM contract workflow is complete.</p>
+                      <span className="crm-label">Next Action</span>
+                      <strong>{selectedContractNextAction.title}</strong>
+                      <p>{selectedContractNextAction.summary}</p>
                     </div>
                     <div>
-                      <span className="crm-label">ERP Contract</span>
-                      <p>{selectedContract.erpContractId ?? "Not captured"}</p>
+                      <span className="crm-label">Data Needed</span>
+                      <p>{selectedContractNextAction.dataNeeded}</p>
                     </div>
                   </section>
                 ) : null}
 
-                {selectedContract.erpHandoffStatus === "NOT_READY" || selectedContract.erpHandoffStatus === "FAILED" ? (
-                  <button
-                    className="crm-primary-button"
-                    disabled={selectedContract.contractStatus.code !== "SIGNED" || readyMutation.isPending}
-                    onClick={() => readyMutation.mutate(selectedContract.id)}
-                    type="button"
-                  >
-                    Mark Ready
-                  </button>
-                ) : null}
-
-                {selectedContract.erpHandoffStatus === "READY" ? (
+                {!selectedContractIsClosed ? (
                   <>
-                    <label className="crm-field">
-                      <span className="crm-label">ERP Contract ID</span>
-                      <input className="crm-input" {...erpForm.register("erpContractId")} />
-                    </label>
-                    <button className="crm-primary-button" disabled={completeMutation.isPending} onClick={onErpComplete} type="button">
-                      Mark Handed Off
-                    </button>
-                    <label className="crm-field">
-                      <span className="crm-label">Failure Message</span>
-                      <textarea className="crm-input crm-textarea" {...erpForm.register("errorMessage")} />
-                    </label>
-                    <button className="crm-secondary-button" disabled={failedMutation.isPending} onClick={onErpFailed} type="button">
-                      Mark Failed
-                    </button>
-                  </>
-                ) : null}
+                    <section className="crm-opportunity-actions">
+                      <div className="crm-opportunity-action-card crm-opportunity-action-card-wide">
+                        <div className="crm-opportunity-action-card-header">
+                          <h4>Contract Workflow</h4>
+                          <p className="crm-muted-text">
+                            Current status: {selectedContract.contractStatus.name ?? "-"} · ERP: {selectedContract.erpHandoffStatus}
+                          </p>
+                        </div>
+                        <div className="crm-opportunity-action-card-footer">
+                          <button
+                            className={`crm-opportunity-action-button ${selectedContract.contractStatus.code === "DRAFT" ? "crm-primary-button" : "crm-secondary-button"}`}
+                            disabled={selectedContract.contractStatus.code !== "DRAFT" || issueMutation.isPending}
+                            onClick={() => issueMutation.mutate(selectedContract.id)}
+                            type="button"
+                          >
+                            {issueMutation.isPending ? "Issuing..." : "Issue Contract"}
+                          </button>
+                          <button
+                            className={`crm-opportunity-action-button ${selectedContract.contractStatus.code === "ISSUED" ? "crm-primary-button" : "crm-secondary-button"}`}
+                            disabled={selectedContract.contractStatus.code !== "ISSUED" || signMutation.isPending}
+                            onClick={() => signMutation.mutate(selectedContract.id)}
+                            type="button"
+                          >
+                            {signMutation.isPending ? "Signing..." : "Sign Contract"}
+                          </button>
+                          <button
+                            className="crm-secondary-button crm-opportunity-action-button"
+                            disabled={selectedContract.contractStatus.code === "CANCELLED" || cancelMutation.isPending}
+                            onClick={() => cancelMutation.mutate(selectedContract.id)}
+                            type="button"
+                          >
+                            {cancelMutation.isPending ? "Cancelling..." : "Cancel Contract"}
+                          </button>
+                        </div>
+                      </div>
 
-                {selectedContract.erpHandoffStatus === "FAILED" ? (
-                  <>
-                    <label className="crm-field">
-                      <span className="crm-label">Failure Message</span>
-                      <textarea className="crm-input crm-textarea" {...erpForm.register("errorMessage")} />
-                    </label>
-                    <button className="crm-secondary-button" disabled={failedMutation.isPending} onClick={onErpFailed} type="button">
-                      Update Failure
-                    </button>
+                      <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onPaymentPlanSubmit}>
+                        <div className="crm-opportunity-action-card-header">
+                          <h4>Payment Plan</h4>
+                          <p className="crm-muted-text">Define milestone schedule before ERP handoff preparation.</p>
+                        </div>
+                        <div className="crm-opportunity-action-card-fields">
+                          <label className="crm-field">
+                            <span className="crm-label">Plan Name</span>
+                            <input className="crm-input" {...paymentPlanForm.register("planName")} />
+                          </label>
+                          <div className="crm-two-col">
+                            <label className="crm-field">
+                              <span className="crm-label">Line 1 Label</span>
+                              <input className="crm-input" {...paymentPlanForm.register("line1Label")} />
+                            </label>
+                            <label className="crm-field">
+                              <span className="crm-label">Line 1 Amount</span>
+                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line1Amount")} />
+                            </label>
+                          </div>
+                          <div className="crm-two-col">
+                            <label className="crm-field">
+                              <span className="crm-label">Line 1 Due Date</span>
+                              <Controller
+                                control={paymentPlanForm.control}
+                                name="line1DueDate"
+                                render={({ field }) => (
+                                  <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                                )}
+                              />
+                            </label>
+                            <label className="crm-field">
+                              <span className="crm-label">Line 1 Percent</span>
+                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line1Percent")} />
+                            </label>
+                          </div>
+                          <div className="crm-two-col">
+                            <label className="crm-field">
+                              <span className="crm-label">Line 2 Label</span>
+                              <input className="crm-input" {...paymentPlanForm.register("line2Label")} />
+                            </label>
+                            <label className="crm-field">
+                              <span className="crm-label">Line 2 Amount</span>
+                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line2Amount")} />
+                            </label>
+                          </div>
+                          <div className="crm-two-col">
+                            <label className="crm-field">
+                              <span className="crm-label">Line 2 Due Date</span>
+                              <Controller
+                                control={paymentPlanForm.control}
+                                name="line2DueDate"
+                                render={({ field }) => (
+                                  <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                                )}
+                              />
+                            </label>
+                            <label className="crm-field">
+                              <span className="crm-label">Line 2 Percent</span>
+                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line2Percent")} />
+                            </label>
+                          </div>
+                        </div>
+                        <div className="crm-opportunity-action-card-footer">
+                          <button className="crm-primary-button crm-opportunity-action-button" disabled={paymentPlanMutation.isPending} type="submit">
+                            {paymentPlanMutation.isPending ? "Saving..." : "Save Payment Plan"}
+                          </button>
+                        </div>
+                      </form>
+
+                      {selectedContract.erpHandoffStatus === "HANDED_OFF" ? (
+                        <section className="crm-next-action">
+                          <div>
+                            <span className="crm-label">Close-Off Stage</span>
+                            <strong>Handed Off</strong>
+                            <p>ERP has accepted the contract payload. CRM contract workflow is complete.</p>
+                          </div>
+                          <div>
+                            <span className="crm-label">ERP Contract</span>
+                            <p>{selectedContract.erpContractId ?? "Not captured"}</p>
+                          </div>
+                        </section>
+                      ) : (
+                        <form className="crm-opportunity-action-card crm-opportunity-lost-card">
+                          <div className="crm-opportunity-action-card-header">
+                            <h4>ERP Handoff</h4>
+                            <p className="crm-muted-text">Prepare and complete ERP payload handoff after contract is signed.</p>
+                          </div>
+                          <div className="crm-opportunity-lost-fields">
+                            <label className="crm-field">
+                              <span className="crm-label">ERP Contract ID</span>
+                              <input className="crm-input" placeholder="Optional ERP reference" {...erpForm.register("erpContractId")} />
+                            </label>
+                            <label className="crm-field">
+                              <span className="crm-label">Failure Message</span>
+                              <textarea
+                                className="crm-input crm-textarea crm-opportunity-textarea"
+                                placeholder="Required only when marking handoff as failed"
+                                {...erpForm.register("errorMessage")}
+                              />
+                            </label>
+                            <div className="crm-opportunity-action-card-footer crm-opportunity-lost-footer">
+                              {selectedContract.erpHandoffStatus === "NOT_READY" || selectedContract.erpHandoffStatus === "FAILED" ? (
+                                <button
+                                  className="crm-secondary-button crm-opportunity-action-button"
+                                  disabled={selectedContract.contractStatus.code !== "SIGNED" || readyMutation.isPending}
+                                  onClick={() => readyMutation.mutate(selectedContract.id)}
+                                  type="button"
+                                >
+                                  {readyMutation.isPending ? "Updating..." : "Mark ERP Ready"}
+                                </button>
+                              ) : null}
+                              {selectedContract.erpHandoffStatus === "READY" ? (
+                                <button
+                                  className="crm-primary-button crm-opportunity-action-button"
+                                  disabled={completeMutation.isPending}
+                                  onClick={onErpComplete}
+                                  type="button"
+                                >
+                                  {completeMutation.isPending ? "Completing..." : "Mark Handed Off"}
+                                </button>
+                              ) : null}
+                              {selectedContract.erpHandoffStatus === "READY" || selectedContract.erpHandoffStatus === "FAILED" ? (
+                                <button
+                                  className="crm-secondary-button crm-opportunity-action-button"
+                                  disabled={failedMutation.isPending}
+                                  onClick={onErpFailed}
+                                  type="button"
+                                >
+                                  {failedMutation.isPending ? "Updating..." : "Mark Failed"}
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </form>
+                      )}
+                    </section>
+
+                    <section className="crm-activity-list">
+                      <h4>Saved Payment Plans</h4>
+                      {(selectedContract.paymentPlans ?? []).map((plan) => (
+                        <article key={plan.id}>
+                          <strong>{plan.planName}</strong>
+                          <span>{plan.planCode}</span>
+                          {plan.lines.map((line) => (
+                            <p key={line.id}>
+                              {line.sequenceNo}. {line.milestoneLabel ?? "Milestone"} - {formatInBase(line.amount, plan.currencyCode)}
+                            </p>
+                          ))}
+                        </article>
+                      ))}
+                      {(selectedContract.paymentPlans ?? []).length === 0 ? (
+                        <p className="crm-muted-text">No payment plan saved.</p>
+                      ) : null}
+                    </section>
                   </>
-                ) : null}
-              </form>
-            </section>
-          </>
-        ) : (
-          <p className="crm-muted-text">Select a contract to manage status, payment plan, and ERP handoff.</p>
-        )}
-      </section>
+                ) : (
+                  <section className="crm-next-action">
+                    <div>
+                      <span className="crm-label">Close-Off Stage</span>
+                      <strong>Handed Off</strong>
+                      <p>Contract workflow is complete for this baseline.</p>
+                    </div>
+                    <div>
+                      <span className="crm-label">ERP Contract</span>
+                      <p>{selectedContract.erpContractId ?? "-"}</p>
+                    </div>
+                  </section>
+                )}
+              </div>
+            ) : (
+              <p className="crm-muted-text crm-opportunity-detail-body">Contract details could not be loaded.</p>
+            )}
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

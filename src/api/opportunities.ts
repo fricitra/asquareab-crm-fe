@@ -88,6 +88,7 @@ export async function listOpportunities(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Opportunity[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { open: number; totalBudget: number; avgProbability: number };
   }>("/opportunities", {
     params: buildListQueryParams(params)
   });

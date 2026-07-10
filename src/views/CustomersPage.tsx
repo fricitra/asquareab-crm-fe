@@ -209,10 +209,10 @@ export function CustomersPage() {
     () => ({
       customers: customersQuery.data?.pagination.total ?? 0,
       brokers: brokersQuery.data?.pagination.total ?? 0,
-      activeCustomers: customers.filter((customer) => customer.isActive).length,
-      activeBrokers: brokers.filter((broker) => broker.isActive).length
+      activeCustomers: customersQuery.data?.summary?.active ?? 0,
+      activeBrokers: brokersQuery.data?.summary?.active ?? 0
     }),
-    [brokers, brokersQuery.data?.pagination.total, customers, customersQuery.data?.pagination.total]
+    [brokersQuery.data, customersQuery.data]
   );
 
   const refresh = (successMessage: string) => {

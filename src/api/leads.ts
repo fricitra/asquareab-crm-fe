@@ -180,7 +180,11 @@ export type QualifyLeadPayload = {
 };
 
 export async function listLeads(params?: ListQueryParams) {
-  const response = await apiClient.get<{ items: Lead[]; pagination: { limit: number; offset: number; total: number } }>("/leads", {
+  const response = await apiClient.get<{
+    items: Lead[];
+    pagination: { limit: number; offset: number; total: number };
+    summary?: { assigned: number; qualified: number; averageScore: number };
+  }>("/leads", {
     params: buildListQueryParams(params)
   });
   return response.data;

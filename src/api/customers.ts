@@ -90,6 +90,7 @@ export async function listCustomers(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Customer[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { active: number };
   }>("/customers", {
     params: buildListQueryParams(params)
   });
@@ -115,6 +116,7 @@ export async function listBrokers(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Broker[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { active: number };
   }>("/brokers", {
     params: buildListQueryParams(params)
   });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { useForm, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
+import { useForm, Controller, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import {
   assignLead,
@@ -30,6 +30,9 @@ import {
   type LeadFormFieldName
 } from "../lib/lead-form-validation";
 import { ListPagination } from "../shared/ListPagination";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
+import { DateField } from "../shared/DateField";
+import { DateTimeField } from "../shared/DateTimeField";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
@@ -368,10 +371,10 @@ function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, curren
       timestamp: null,
       user: null,
       role: null,
-      summary: "Move the opportunity to reservation-ready before selecting a unit.",
+      summary: "Move the opportunity to reservation-ready before selecting and blocking a unit.",
       details: [
-        { label: "Required Before", value: "Proposal or negotiation" },
-        { label: "Next Screen", value: "/reservations" }
+        { label: "Required Before", value: "Negotiation" },
+        { label: "Next Action", value: "Create Reservation" }
       ]
     },
     {
@@ -381,10 +384,23 @@ function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, curren
       timestamp: null,
       user: null,
       role: null,
-      summary: "Create the reservation from the Reservations screen using this opportunity and an available unit.",
+      summary: "Create the reservation from Opportunity Detail or the Reservations screen.",
       details: [
-        { label: "Required Data", value: "Opportunity, available unit, amount, expiry" },
-        { label: "Inventory Result", value: "Unit becomes Reserved" }
+        { label: "Required Data", value: "Available unit, amount, expiry" },
+        { label: "Next Step", value: "Optional Proposal / Offer" }
+      ]
+    },
+    {
+      id: "proposal",
+      title: "Proposal",
+      status: "next",
+      timestamp: null,
+      user: null,
+      role: null,
+      summary: "Commercial offer after the unit is reserved.",
+      details: [
+        { label: "Required Before", value: "Active reservation" },
+        { label: "Next Screen", value: "/proposals" }
       ]
     }
   ];
@@ -1022,15 +1038,13 @@ export function LeadsPage() {
   }, [qualifyForm, selectedLead]);
 
   const stats = useMemo(() => {
-    const leads = leadsQuery.data?.items ?? [];
-    const assigned = leads.filter((lead) => lead.assignedToUser.id).length;
-    const qualified = leads.filter((lead) => lead.qualifiedAt).length;
-    const averageScore =
-      leads.length === 0
-        ? 0
-        : Math.round(leads.reduce((sum, lead) => sum + (lead.scoreTotal ?? 0), 0) / leads.length);
-
-    return { total: leadsQuery.data?.pagination.total ?? 0, assigned, qualified, averageScore };
+    const summary = leadsQuery.data?.summary;
+    return {
+      total: leadsQuery.data?.pagination.total ?? 0,
+      assigned: summary?.assigned ?? 0,
+      qualified: summary?.qualified ?? 0,
+      averageScore: summary?.averageScore ?? 0
+    };
   }, [leadsQuery.data]);
 
   const onCreate = createForm.handleSubmit(async (values) => {
@@ -1104,7 +1118,10 @@ export function LeadsPage() {
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Lead Management</p>
-          <h2>Lead Inbox</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Lead Inbox</h2>
+            <CurrencyBadge />
+          </div>
         </div>
         <button
           className="crm-primary-button crm-fit-button"
@@ -1308,7 +1325,13 @@ export function LeadsPage() {
                   )}
                   <label className="crm-field">
                     <FieldLabel required>Date Generated</FieldLabel>
-                    <input className="crm-input" type="date" {...createForm.register("dateGenerated")} />
+                    <Controller
+                      control={createForm.control}
+                      name="dateGenerated"
+                      render={({ field }) => (
+                        <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                      )}
+                    />
                   </label>
                   <label className="crm-field">
                     <FieldLabel required>Marketing Cost Allocation</FieldLabel>
@@ -1326,7 +1349,13 @@ export function LeadsPage() {
                   />
                   <label className="crm-field">
                     <FieldLabel>Date of Birth</FieldLabel>
-                    <input className="crm-input" type="date" {...createForm.register("dateOfBirth")} />
+                    <Controller
+                      control={createForm.control}
+                      name="dateOfBirth"
+                      render={({ field }) => (
+                        <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                      )}
+                    />
                   </label>
                   <label className="crm-field">
                     <FieldLabel>City</FieldLabel>
@@ -1345,7 +1374,13 @@ export function LeadsPage() {
                   <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={createForm.register} />
                   <label className="crm-field">
                     <FieldLabel>Last Interaction</FieldLabel>
-                    <input className="crm-input" type="datetime-local" {...createForm.register("lastInteractionAt")} />
+                    <Controller
+                      control={createForm.control}
+                      name="lastInteractionAt"
+                      render={({ field }) => (
+                        <DateTimeField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                      )}
+                    />
                   </label>
                   <SelectField label="Interaction Type" name="lastInteractionTypeRefId" options={interactionTypeQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Interaction Outcome" name="interactionOutcomeRefId" options={interactionOutcomeQuery.data ?? []} register={createForm.register} />
@@ -1553,7 +1588,13 @@ export function LeadsPage() {
                     <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={qualifyForm.register} />
                     <label className="crm-field">
                       <span className="crm-label">Last Interaction</span>
-                      <input className="crm-input" type="datetime-local" {...qualifyForm.register("lastInteractionAt")} />
+                      <Controller
+                        control={qualifyForm.control}
+                        name="lastInteractionAt"
+                        render={({ field }) => (
+                          <DateTimeField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                        )}
+                      />
                     </label>
                     <SelectField
                       label="Interaction Type"
@@ -1573,7 +1614,13 @@ export function LeadsPage() {
                     </label>
                     <label className="crm-field">
                       <span className="crm-label">Date of Birth</span>
-                      <input className="crm-input" type="date" {...qualifyForm.register("dateOfBirth")} />
+                      <Controller
+                        control={qualifyForm.control}
+                        name="dateOfBirth"
+                        render={({ field }) => (
+                          <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                        )}
+                      />
                     </label>
                     <label className="crm-field">
                       <span className="crm-label">City</span>

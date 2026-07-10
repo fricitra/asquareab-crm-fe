@@ -135,6 +135,7 @@ export async function listContracts(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Contract[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { draft: number; signed: number; value: number };
   }>("/contracts", {
     params: buildListQueryParams(params)
   });

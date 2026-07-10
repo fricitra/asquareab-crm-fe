@@ -65,6 +65,7 @@ export async function listReservations(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Reservation[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { active: number; cancelled: number; amount: number };
   }>("/reservations", {
     params: buildListQueryParams(params)
   });

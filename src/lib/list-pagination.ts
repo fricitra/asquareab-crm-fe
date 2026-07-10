@@ -13,6 +13,7 @@ export type ListQueryParams = {
   search?: string;
   limit?: number;
   offset?: number;
+  opportunityId?: string;
 };
 
 export function buildListQueryParams(params?: ListQueryParams) {
@@ -30,6 +31,9 @@ export function buildListQueryParams(params?: ListQueryParams) {
   }
   if (params.offset != null) {
     query.offset = params.offset;
+  }
+  if (params.opportunityId) {
+    query.opportunityId = params.opportunityId;
   }
 
   return Object.keys(query).length ? query : undefined;

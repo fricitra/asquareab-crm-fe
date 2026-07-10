@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import {
   createCurrency,
   createExchangeRate,
@@ -17,6 +17,7 @@ import {
   type ExchangeRatePayload
 } from "../api/currencies";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
 
 type CurrencyTab = "currencies" | "policy" | "rates";
@@ -744,7 +745,13 @@ export function CurrencyMasterPage() {
               </label>
               <label className="crm-field">
                 <span className="crm-label">Rate Date</span>
-                <input className="crm-input" type="date" {...rateForm.register("rateDate")} />
+                <Controller
+                  control={rateForm.control}
+                  name="rateDate"
+                  render={({ field }) => (
+                    <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                  )}
+                />
               </label>
               <label className="crm-field">
                 <span className="crm-label">Source</span>

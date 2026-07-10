@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { getApiErrorMessage } from "../api/auth";
 import { listCurrencies } from "../api/currencies";
-import { listUnits } from "../api/inventory";
+import { listUnits, type Unit } from "../api/inventory";
 import { listOpportunities } from "../api/opportunities";
 import {
   acceptProposal,
@@ -12,10 +14,15 @@ import {
   listProposals,
   rejectProposal,
   submitProposal,
-  type Proposal
+  type Proposal,
+  type ProposalPricingContext
 } from "../api/proposals";
-import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { listReservations } from "../api/reservations";
+import { useCurrencyContext, useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { formatMoney } from "../lib/format-money";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
+import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
@@ -23,7 +30,6 @@ type ProposalFormValues = {
   opportunityId: string;
   unitId: string;
   validUntil: string;
-  currencyCode: string;
   listPrice: string;
   proposedPrice: string;
   discountAmount: string;
@@ -48,6 +54,187 @@ function pickNumber(value: string) {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
+}
+
+function defaultProposalValidUntil() {
+  const validUntil = new Date();
+  validUntil.setDate(validUntil.getDate() + 14);
+  return validUntil.toISOString().slice(0, 10);
+}
+
+function formatDiscountNumber(value: number) {
+  return String(Number(value.toFixed(2)));
+}
+
+function recalculateProposalDiscount(
+  setValue: (name: keyof ProposalFormValues, value: string) => void,
+  listPriceRaw: string,
+  proposedPriceRaw: string
+) {
+  const listPrice = pickNumber(listPriceRaw);
+  const proposedPrice = pickNumber(proposedPriceRaw);
+
+  if (listPrice == null || proposedPrice == null) {
+    setValue("discountAmount", "");
+    setValue("discountPercent", "");
+    return;
+  }
+
+  const discountAmount = Math.max(0, listPrice - proposedPrice);
+  const discountPercent = listPrice > 0 ? (discountAmount / listPrice) * 100 : 0;
+  setValue("discountAmount", formatDiscountNumber(discountAmount));
+  setValue("discountPercent", formatDiscountNumber(discountPercent));
+}
+
+function buildEquivalentHint(
+  amountInBase: number | null | undefined,
+  equivalentCurrency: string,
+  baseCurrency: string,
+  ratesToBase: Record<string, number>,
+  fromBase: (value: number | null | undefined, currencyCode?: string | null) => number | null
+) {
+  if (amountInBase == null || equivalentCurrency === baseCurrency) {
+    return null;
+  }
+
+  const converted = fromBase(amountInBase, equivalentCurrency);
+  const rateToBase = ratesToBase[equivalentCurrency];
+
+  if (converted == null || !rateToBase) {
+    return `No active exchange rate for ${equivalentCurrency}.`;
+  }
+
+  const basePerUnit = Number((1 / rateToBase).toFixed(4));
+  return `≈ ${formatMoney(converted, equivalentCurrency)} (1 ${equivalentCurrency} = ${basePerUnit.toLocaleString()} ${baseCurrency})`;
+}
+
+function buildPricingContext(
+  unit: Unit,
+  baseCurrency: string,
+  equivalentCurrency: string,
+  ratesToBase: Record<string, number>,
+  toBase: (value: number | null | undefined, currencyCode?: string | null) => number,
+  options?: {
+    proposedPrice?: number | null;
+    proposedPriceCurrency?: string | null;
+    reservationNo?: string | null;
+  }
+): ProposalPricingContext {
+  const listPriceInBase = unit.basePrice == null ? null : toBase(unit.basePrice, unit.currencyCode);
+  const proposedSource = options?.proposedPrice ?? unit.basePrice;
+  const proposedCurrency = options?.proposedPriceCurrency ?? unit.currencyCode ?? baseCurrency;
+  const proposedInBase = proposedSource == null ? null : toBase(proposedSource, proposedCurrency);
+
+  return {
+    equivalentCurrencyCode: equivalentCurrency,
+    listPriceSource:
+      unit.basePrice == null ? undefined : { amount: unit.basePrice, currencyCode: unit.currencyCode ?? baseCurrency },
+    listPriceBase: listPriceInBase == null ? undefined : { amount: listPriceInBase, currencyCode: baseCurrency },
+    proposedPriceSource:
+      proposedSource == null ? undefined : { amount: proposedSource, currencyCode: proposedCurrency },
+    proposedPriceBase: proposedInBase == null ? undefined : { amount: proposedInBase, currencyCode: baseCurrency },
+    reservationNo: options?.reservationNo ?? null,
+    ratesUsed: ratesToBase
+  };
+}
+
+function formatPricingConversionLine(
+  label: string,
+  source: { amount: number; currencyCode: string },
+  base: { amount: number; currencyCode: string }
+) {
+  if (source.currencyCode.toUpperCase() === base.currencyCode.toUpperCase()) {
+    return `${label}: ${formatMoney(source.amount, source.currencyCode)}`;
+  }
+
+  return `${label}: ${formatMoney(source.amount, source.currencyCode)} → ${formatMoney(base.amount, base.currencyCode)}`;
+}
+
+function buildPrefillSourceNote(context: ProposalPricingContext | null, baseCurrency: string, prefix?: string | null) {
+  if (!context) {
+    return prefix ?? null;
+  }
+
+  const lines: string[] = [];
+
+  if (prefix) {
+    lines.push(prefix);
+  }
+
+  if (context.listPriceSource && context.listPriceBase) {
+    lines.push(formatPricingConversionLine("Unit master", context.listPriceSource, context.listPriceBase));
+  }
+
+  if (context.proposedPriceSource && context.proposedPriceBase) {
+    const label = context.reservationNo ? `Reservation ${context.reservationNo}` : "Proposed price";
+    lines.push(formatPricingConversionLine(label, context.proposedPriceSource, context.proposedPriceBase));
+  }
+
+  if (context.equivalentCurrencyCode && context.equivalentCurrencyCode !== baseCurrency) {
+    lines.push(`Equivalent display currency: ${context.equivalentCurrencyCode}.`);
+  }
+
+  lines.push("You can change the unit before submitting.");
+  return lines.join(" ");
+}
+
+function buildProposalAuditLines(context: ProposalPricingContext | null, baseCurrency: string) {
+  if (!context) {
+    return [];
+  }
+
+  const lines: string[] = [];
+
+  if (context.listPriceSource && context.listPriceBase) {
+    lines.push(formatPricingConversionLine("List price source", context.listPriceSource, context.listPriceBase));
+  }
+
+  if (context.proposedPriceSource && context.proposedPriceBase) {
+    const label = context.reservationNo ? `Reservation amount (${context.reservationNo})` : "Proposed price source";
+    lines.push(formatPricingConversionLine(label, context.proposedPriceSource, context.proposedPriceBase));
+  }
+
+  if (context.equivalentCurrencyCode) {
+    lines.push(`Equivalent currency recorded: ${context.equivalentCurrencyCode}`);
+  }
+
+  if (context.ratesUsed && context.equivalentCurrencyCode && context.ratesUsed[context.equivalentCurrencyCode]) {
+    const rate = context.ratesUsed[context.equivalentCurrencyCode];
+    lines.push(`Exchange rate used: 1 ${context.equivalentCurrencyCode} = ${(1 / rate).toFixed(4)} ${baseCurrency}`);
+  }
+
+  return lines;
+}
+
+function applyUnitPricingToForm(
+  setValue: (name: keyof ProposalFormValues, value: string) => void,
+  unit: Unit,
+  toBase: (value: number | null | undefined, currencyCode?: string | null) => number,
+  options?: {
+    proposedPrice?: number | null;
+    proposedPriceCurrency?: string | null;
+    overwriteProposedPrice?: boolean;
+  }
+) {
+  setValue("unitId", unit.id);
+
+  const listPriceInBase = unit.basePrice == null ? null : toBase(unit.basePrice, unit.currencyCode);
+  setValue("listPrice", listPriceInBase == null ? "" : formatDiscountNumber(listPriceInBase));
+
+  const proposedSource = options?.proposedPrice ?? unit.basePrice;
+  const proposedCurrency = options?.proposedPriceCurrency ?? unit.currencyCode;
+  const proposedInBase = proposedSource == null ? null : toBase(proposedSource, proposedCurrency);
+
+  if (options?.overwriteProposedPrice !== false && proposedInBase != null) {
+    setValue("proposedPrice", formatDiscountNumber(proposedInBase));
+  }
+
+  const listRaw = listPriceInBase == null ? "" : formatDiscountNumber(listPriceInBase);
+  const proposedRaw =
+    options?.overwriteProposedPrice !== false && proposedInBase != null
+      ? formatDiscountNumber(proposedInBase)
+      : "";
+  recalculateProposalDiscount(setValue, listRaw, proposedRaw || listRaw);
 }
 
 function proposalNextAction(proposal: Proposal) {
@@ -85,7 +272,7 @@ function proposalNextAction(proposal: Proposal) {
   if (status === "ACCEPTED") {
     return {
       title: "Complete",
-      summary: "Proposal has been accepted. Continue the customer journey toward reservation when ready.",
+      summary: "Proposal has been accepted. Continue toward contract and KYC when ready.",
       dataNeeded: "No further proposal action required."
     };
   }
@@ -172,20 +359,30 @@ function proposalWorkflowSteps(
 
 export function ProposalsPage() {
   const queryClient = useQueryClient();
-  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const processedHandoffRef = useRef<string | null>(null);
+  const handoffNoteRef = useRef<string | null>(null);
+  const currencyContextQuery = useCurrencyContext();
+  const { formatInBase, baseCurrency, ratesToBase, toBase, fromBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
+  const [proposalDetailModalOpen, setProposalDetailModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [prefillSource, setPrefillSource] = useState<string | null>(null);
+  const [pricingContext, setPricingContext] = useState<ProposalPricingContext | null>(null);
+  const [equivalentCurrencyCode, setEquivalentCurrencyCode] = useState("USD");
+  const lastPrefilledOpportunityIdRef = useRef<string | null>(null);
 
   const proposalForm = useForm<ProposalFormValues>({
     defaultValues: {
       opportunityId: "",
       unitId: "",
       validUntil: "",
-      currencyCode: defaultContractCurrency,
       listPrice: "",
       proposedPrice: "",
       discountAmount: "",
@@ -215,31 +412,115 @@ export function ProposalsPage() {
   const proposalDetailQuery = useQuery({
     queryKey: ["proposal", selectedProposalId],
     queryFn: () => getProposal(selectedProposalId ?? ""),
-    enabled: Boolean(selectedProposalId)
+    enabled: Boolean(selectedProposalId && proposalDetailModalOpen),
+    refetchOnWindowFocus: false
   });
   const opportunitiesQuery = useQuery({
     queryKey: ["opportunities", "proposal-select"],
     queryFn: () => listOpportunities({ limit: DROPDOWN_LIST_LIMIT }),
-    staleTime: 10_000
+    enabled: createOpen,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
+  });
+  const reservedOpportunitiesQuery = useQuery({
+    queryKey: ["reservations", "proposal-opportunities"],
+    queryFn: () => listReservations({ limit: DROPDOWN_LIST_LIMIT }),
+    enabled: createOpen,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
   });
   const unitsQuery = useQuery({
     queryKey: ["units", "proposal-select"],
     queryFn: () => listUnits({ limit: DROPDOWN_LIST_LIMIT }),
-    staleTime: 10_000
+    enabled: createOpen,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
   });
   const currenciesQuery = useQuery({
     queryKey: ["currencies", "proposal-dropdown"],
     queryFn: () => listCurrencies({ dropdownOnly: true, activeOnly: true }),
+    enabled: createOpen,
     staleTime: 60_000
+  });
+
+  const selectedOpportunityId = proposalForm.watch("opportunityId");
+  const opportunityReservationPrefillQuery = useQuery({
+    queryKey: ["reservations", "proposal-prefill", selectedOpportunityId],
+    queryFn: () => listReservations({ opportunityId: selectedOpportunityId, limit: 5, offset: 0 }),
+    enabled: createOpen && Boolean(selectedOpportunityId),
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
   });
 
   const proposalRows = proposalsQuery.data?.items ?? [];
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProposal = proposalDetailQuery.data ?? proposalRows.find((proposal) => proposal.id === selectedProposalId) ?? null;
-  const selectedOpportunityId = proposalForm.watch("opportunityId");
+  const proposalContractReservationQuery = useQuery({
+    queryKey: ["reservations", "proposal-contract", selectedProposal?.opportunity.id],
+    queryFn: () => listReservations({ opportunityId: selectedProposal?.opportunity.id, limit: 5, offset: 0 }),
+    enabled: Boolean(proposalDetailModalOpen && selectedProposal?.opportunity.id),
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
+  });
   const selectedUnitId = proposalForm.watch("unitId");
   const selectedOpportunity = (opportunitiesQuery.data?.items ?? []).find((opportunity) => opportunity.id === selectedOpportunityId);
   const selectedUnit = (unitsQuery.data?.items ?? []).find((unit) => unit.id === selectedUnitId);
+  const activeOpportunityReservation =
+    (opportunityReservationPrefillQuery.data?.items ?? []).find(
+      (reservation) => reservation.isActive && reservation.reservationStatus.code !== "CANCELLED"
+    ) ?? null;
+  const activeProposalReservation =
+    (proposalContractReservationQuery.data?.items ?? []).find(
+      (reservation) =>
+        reservation.isActive &&
+        ["APPROVED", "CONVERTED_TO_CONTRACT"].includes(reservation.reservationStatus.code ?? "")
+    ) ?? null;
+
+  const proposalUnits = useMemo(() => {
+    const units = unitsQuery.data?.items ?? [];
+    const projectCode = selectedOpportunity?.projectCode;
+
+    if (!projectCode) {
+      return units;
+    }
+
+    const projectUnits = units.filter((unit) => unit.project.projectCode === projectCode);
+    return projectUnits.length > 0 ? projectUnits : units;
+  }, [selectedOpportunity?.projectCode, unitsQuery.data?.items]);
+
+  const proposalOpportunities = useMemo(() => {
+    const reservedOpportunityIds = new Set(
+      (reservedOpportunitiesQuery.data?.items ?? [])
+        .filter((reservation) => reservation.isActive && reservation.reservationStatus.code !== "CANCELLED")
+        .map((reservation) => reservation.opportunity.id)
+        .filter((id): id is string => Boolean(id))
+    );
+
+    return (opportunitiesQuery.data?.items ?? []).filter((opportunity) => reservedOpportunityIds.has(opportunity.id));
+  }, [opportunitiesQuery.data?.items, reservedOpportunitiesQuery.data?.items]);
+
+  const equivalentCurrencyOptions = useMemo(() => {
+    const reportingCodes = currencyContextQuery.data?.reportingCurrencyCodes ?? [];
+    const codes = new Set([baseCurrency, ...reportingCodes, "USD"]);
+    return currencyRows.filter((currency) => codes.has(currency.currencyCode));
+  }, [baseCurrency, currencyContextQuery.data?.reportingCurrencyCodes, currencyRows]);
+
+  const watchedListPrice = proposalForm.watch("listPrice");
+  const watchedProposedPrice = proposalForm.watch("proposedPrice");
+  const listPriceEquivalentHint = buildEquivalentHint(
+    pickNumber(watchedListPrice),
+    equivalentCurrencyCode,
+    baseCurrency,
+    ratesToBase,
+    fromBase
+  );
+  const proposedPriceEquivalentHint = buildEquivalentHint(
+    pickNumber(watchedProposedPrice),
+    equivalentCurrencyCode,
+    baseCurrency,
+    ratesToBase,
+    fromBase
+  );
   const selectedProposalNextAction = selectedProposal ? proposalNextAction(selectedProposal) : null;
   const selectedProposalIsClosed =
     selectedProposal?.proposalStatus.code === "ACCEPTED" ||
@@ -247,22 +528,49 @@ export function ProposalsPage() {
     selectedProposal?.proposalStatus.code === "EXPIRED";
 
   const stats = useMemo(() => {
-    const total = proposalsQuery.data?.pagination.total ?? proposalRows.length;
-    const approvalRequired = proposalRows.filter((proposal) => proposal.approvalRequired).length;
-    const approved = proposalRows.filter((proposal) => ["APPROVED", "ACCEPTED"].includes(proposal.proposalStatus.code ?? "")).length;
-    const value = proposalRows.reduce(
-      (sum, proposal) => sum + toBase(proposal.proposedPrice, proposal.currencyCode),
-      0
-    );
-    return { total, approvalRequired, approved, value };
-  }, [proposalRows, proposalsQuery.data?.pagination.total, toBase]);
+    const summary = proposalsQuery.data?.summary;
+    return {
+      total: proposalsQuery.data?.pagination.total ?? 0,
+      approvalRequired: summary?.approvalRequired ?? 0,
+      approved: summary?.approved ?? 0,
+      value: summary?.value ?? 0
+    };
+  }, [proposalsQuery.data]);
 
   const refreshProposal = (proposal: Proposal, successMessage: string) => {
     setMessage(successMessage);
     setSelectedProposalId(proposal.id);
+    setProposalDetailModalOpen(true);
     queryClient.setQueryData(["proposal", proposal.id], proposal);
     void queryClient.invalidateQueries({ queryKey: ["proposals"] });
     void queryClient.invalidateQueries({ queryKey: ["proposal", proposal.id] });
+  };
+
+  const loadProposal = (proposalId: string) => {
+    setSelectedProposalId(proposalId);
+    setProposalDetailModalOpen(true);
+  };
+
+  const closeProposalDetailModal = () => {
+    setProposalDetailModalOpen(false);
+    setSelectedProposalId(null);
+  };
+
+  const openContractHandoff = (proposal: Proposal) => {
+    if (!activeProposalReservation) {
+      setMessage("No approved reservation found for this opportunity.");
+      return;
+    }
+
+    closeProposalDetailModal();
+    navigate(`/contracts?createFor=${activeProposalReservation.id}`, {
+      state: {
+        fromProposal: proposal.proposalNo,
+        contractValue: proposal.proposedPrice,
+        currencyCode: proposal.currencyCode ?? baseCurrency,
+        remarks: `Contract from accepted proposal ${proposal.proposalNo}.`
+      }
+    });
   };
 
   const createMutation = useMutation({
@@ -271,21 +579,25 @@ export function ProposalsPage() {
         opportunityId: values.opportunityId,
         unitId: pickString(values.unitId),
         validUntil: pickString(values.validUntil),
-        currencyCode: pickString(values.currencyCode),
+        currencyCode: baseCurrency,
         listPrice: pickNumber(values.listPrice),
         proposedPrice: pickNumber(values.proposedPrice),
         discountAmount: pickNumber(values.discountAmount),
         discountPercent: pickNumber(values.discountPercent),
         approvalThresholdPercent: pickNumber(values.approvalThresholdPercent),
+        equivalentCurrencyCode,
+        pricingContextJson: pricingContext
+          ? { ...pricingContext, equivalentCurrencyCode }
+          : { equivalentCurrencyCode },
         remarks: pickString(values.remarks)
       }),
     onSuccess: (proposal) => {
       setCreateOpen(false);
+      setPricingContext(null);
       proposalForm.reset({
         opportunityId: "",
         unitId: "",
         validUntil: "",
-        currencyCode: defaultContractCurrency,
         listPrice: "",
         proposedPrice: "",
         discountAmount: "",
@@ -295,7 +607,7 @@ export function ProposalsPage() {
       });
       refreshProposal(proposal, "Proposal created.");
     },
-    onError: () => setMessage("Proposal could not be created.")
+    onError: (error) => setMessage(getApiErrorMessage(error) || "Proposal could not be created.")
   });
 
   const submitMutation = useMutation({
@@ -318,7 +630,11 @@ export function ProposalsPage() {
   });
   const acceptMutation = useMutation({
     mutationFn: (id: string) => acceptProposal(id, pickString(actionForm.getValues("remarks"))),
-    onSuccess: (proposal) => refreshProposal(proposal, "Proposal accepted."),
+    onSuccess: (proposal) => {
+      void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+      void queryClient.invalidateQueries({ queryKey: ["opportunity", proposal.opportunity.id] });
+      refreshProposal(proposal, "Proposal accepted. Opportunity moved to Won.");
+    },
     onError: () => setMessage("Proposal could not be accepted.")
   });
 
@@ -330,14 +646,179 @@ export function ProposalsPage() {
     createMutation.mutate(values);
   });
 
+  const openCreateModal = (opportunityId?: string) => {
+    lastPrefilledOpportunityIdRef.current = null;
+    handoffNoteRef.current = null;
+    setPrefillSource(null);
+    setPricingContext(null);
+    setEquivalentCurrencyCode(
+      equivalentCurrencyOptions.find((currency) => currency.currencyCode === "USD")?.currencyCode ??
+        equivalentCurrencyOptions.find((currency) => currency.currencyCode !== baseCurrency)?.currencyCode ??
+        baseCurrency
+    );
+    proposalForm.reset({
+      opportunityId: opportunityId ?? "",
+      unitId: "",
+      validUntil: defaultProposalValidUntil(),
+      listPrice: "",
+      proposedPrice: "",
+      discountAmount: "",
+      discountPercent: "",
+      approvalThresholdPercent: "5",
+      remarks: ""
+    });
+    setCreateOpen(true);
+  };
+
+  useEffect(() => {
+    const createFor = searchParams.get("createFor");
+    if (!createFor || processedHandoffRef.current === createFor) {
+      return;
+    }
+
+    processedHandoffRef.current = createFor;
+    openCreateModal(createFor);
+
+    const fromReservation = (location.state as { fromReservation?: string } | null)?.fromReservation;
+    const fromOpportunity = (location.state as { fromOpportunity?: string } | null)?.fromOpportunity;
+    if (fromReservation) {
+      handoffNoteRef.current = `Opened from approved reservation ${fromReservation}.`;
+    } else if (fromOpportunity) {
+      handoffNoteRef.current = `Opened from opportunity ${fromOpportunity} after moving to Proposal.`;
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("createFor");
+    setSearchParams(nextParams, { replace: true });
+  }, [location.state, searchParams, setSearchParams]);
+
+  const applyPricingFromUnit = (
+    unit: Unit,
+    options?: {
+      proposedPrice?: number | null;
+      proposedPriceCurrency?: string | null;
+      reservationNo?: string | null;
+    }
+  ) => {
+    applyUnitPricingToForm(proposalForm.setValue, unit, toBase, {
+      proposedPrice: options?.proposedPrice,
+      proposedPriceCurrency: options?.proposedPriceCurrency,
+      overwriteProposedPrice: true
+    });
+
+    const context = buildPricingContext(unit, baseCurrency, equivalentCurrencyCode, ratesToBase, toBase, options);
+    setPricingContext(context);
+    setPrefillSource(buildPrefillSourceNote(context, baseCurrency, handoffNoteRef.current));
+  };
+
+  useEffect(() => {
+    setPricingContext((current) => (current ? { ...current, equivalentCurrencyCode } : current));
+  }, [equivalentCurrencyCode]);
+
+  useEffect(() => {
+    if (pricingContext) {
+      setPrefillSource(buildPrefillSourceNote(pricingContext, baseCurrency, handoffNoteRef.current));
+    }
+  }, [baseCurrency, pricingContext]);
+
+  useEffect(() => {
+    if (!createOpen || !selectedOpportunityId || !unitsQuery.data) {
+      return;
+    }
+
+    if (lastPrefilledOpportunityIdRef.current === selectedOpportunityId) {
+      return;
+    }
+
+    if (opportunityReservationPrefillQuery.isFetching) {
+      return;
+    }
+
+    lastPrefilledOpportunityIdRef.current = selectedOpportunityId;
+
+    const units = unitsQuery.data.items;
+    const opportunity = selectedOpportunity;
+    const activeReservation = activeOpportunityReservation;
+
+    let unit: Unit | undefined;
+    let proposedPrice: number | null | undefined;
+    let proposedPriceCurrency: string | null | undefined;
+    let reservationNo: string | null = null;
+
+    if (activeReservation) {
+      unit = units.find((item) => item.id === activeReservation.unit.id);
+      proposedPrice = activeReservation.reservationAmount ?? opportunity?.budgetAmount ?? null;
+      proposedPriceCurrency = activeReservation.currencyCode ?? opportunity?.currencyCode ?? unit?.currencyCode ?? null;
+      reservationNo = activeReservation.reservationNo;
+    }
+
+    if (!unit && opportunity?.proposedUnitCode) {
+      unit = units.find((item) => item.unitCode === opportunity.proposedUnitCode);
+      proposedPrice = opportunity.budgetAmount ?? unit?.basePrice ?? null;
+      proposedPriceCurrency = opportunity.currencyCode ?? unit?.currencyCode ?? null;
+    }
+
+    if (unit) {
+      applyPricingFromUnit(unit, { proposedPrice, proposedPriceCurrency, reservationNo });
+      proposalForm.setValue(
+        "remarks",
+        activeReservation
+          ? `Proposal from reservation ${activeReservation.reservationNo}.`
+          : opportunity?.remarks ?? ""
+      );
+      return;
+    }
+
+    setPricingContext(null);
+    proposalForm.setValue("unitId", "");
+    proposalForm.setValue("listPrice", "");
+    proposalForm.setValue(
+      "proposedPrice",
+      opportunity?.budgetAmount != null ? formatDiscountNumber(toBase(opportunity.budgetAmount, opportunity.currencyCode)) : ""
+    );
+    setPrefillSource("No reserved unit found for this opportunity. Select a unit manually.");
+  }, [
+    activeOpportunityReservation,
+    baseCurrency,
+    createOpen,
+    opportunityReservationPrefillQuery.isFetching,
+    proposalForm,
+    selectedOpportunity,
+    selectedOpportunityId,
+    toBase,
+    unitsQuery.data,
+    equivalentCurrencyCode,
+    ratesToBase
+  ]);
+
+  useEffect(() => {
+    if (!proposalDetailModalOpen) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !createOpen) {
+        closeProposalDetailModal();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [createOpen, proposalDetailModalOpen]);
+
+  const selectedProposalAuditLines = buildProposalAuditLines(selectedProposal?.pricingContextJson ?? null, baseCurrency);
+
   return (
     <div className="crm-workspace">
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Pricing</p>
-          <h2>Proposal Workspace</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Proposal Workspace</h2>
+            <CurrencyBadge />
+          </div>
         </div>
-        <button className="crm-primary-button" onClick={() => setCreateOpen(true)} type="button">
+        <button className="crm-primary-button" onClick={() => openCreateModal()} type="button">
           New Proposal
         </button>
       </section>
@@ -365,107 +846,178 @@ export function ProposalsPage() {
 
       {createOpen ? (
         <div className="crm-modal-backdrop" role="presentation">
-      <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
-        <div className="crm-panel-header">
-          <h3>Create Proposal</h3>
-          <button className="crm-secondary-button" onClick={() => setCreateOpen(false)} type="button">Close</button>
-        </div>
-        <form className="crm-form crm-reservation-form" onSubmit={onProposalSubmit}>
-          <label className="crm-field">
-            <span className="crm-label">Opportunity</span>
-            <select className="crm-input" {...proposalForm.register("opportunityId")}>
-              <option value="">Select opportunity</option>
-              {(opportunitiesQuery.data?.items ?? []).map((opportunity) => (
-                <option key={opportunity.id} value={opportunity.id}>
-                  {opportunity.opportunityNo} - {opportunity.customer.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Unit</span>
-            <select
-              className="crm-input"
-              {...proposalForm.register("unitId", {
-                onChange: (event) => {
-                  const unit = (unitsQuery.data?.items ?? []).find((item) => item.id === event.target.value);
-                  if (unit) {
-                    proposalForm.setValue("listPrice", String(unit.basePrice ?? ""));
-                    proposalForm.setValue("currencyCode", unit.currencyCode ?? "USD");
-                  }
-                }
-              })}
-            >
-              <option value="">Select unit</option>
-              {(unitsQuery.data?.items ?? []).map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.unitCode} - {formatInBase(unit.basePrice, unit.currencyCode)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Valid Until</span>
-            <input className="crm-input" type="date" {...proposalForm.register("validUntil")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Currency</span>
-            <select className="crm-input" {...proposalForm.register("currencyCode")}>
-              <option value="">Select currency</option>
-              {currencyRows.map((currency) => (
-                <option key={currency.id} value={currency.currencyCode}>
-                  {currency.currencyCode} - {currency.currencyName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">List Price</span>
-            <input className="crm-input" {...proposalForm.register("listPrice")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Proposed Price</span>
-            <input className="crm-input" {...proposalForm.register("proposedPrice")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Discount Amount</span>
-            <input className="crm-input" {...proposalForm.register("discountAmount")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Discount %</span>
-            <input className="crm-input" {...proposalForm.register("discountPercent")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Approval Threshold %</span>
-            <input className="crm-input" {...proposalForm.register("approvalThresholdPercent")} />
-          </label>
-          <label className="crm-field crm-form-wide">
-            <span className="crm-label">Remarks</span>
-            <input className="crm-input" {...proposalForm.register("remarks")} />
-          </label>
-          <button className="crm-primary-button crm-form-action" disabled={createMutation.isPending} type="submit">
-            {createMutation.isPending ? "Creating..." : "Create Proposal"}
-          </button>
-        </form>
-        <dl className="crm-detail-list crm-inline-preview">
-          <div>
-            <dt>Opportunity</dt>
-            <dd>{selectedOpportunity?.opportunityNo ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Customer</dt>
-            <dd>{selectedOpportunity?.customer.name ?? "-"}</dd>
-          </div>
-          <div>
-            <dt>Unit Price</dt>
-            <dd>{formatInBase(selectedUnit?.basePrice, selectedUnit?.currencyCode)}</dd>
-          </div>
-          <div>
-            <dt>Unit Status</dt>
-            <dd>{selectedUnit?.availabilityStatus.name ?? "-"}</dd>
-          </div>
-        </dl>
-      </section>
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-reservation-modal crm-proposal-modal" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>Create Proposal</h3>
+                <p className="crm-muted-text">All proposal amounts are captured in base currency ({baseCurrency}).</p>
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
+                Close
+              </button>
+            </div>
+            <form className="crm-reservation-modal-form" onSubmit={onProposalSubmit}>
+              <div className="crm-reservation-modal-body">
+                <div className="crm-proposal-modal-fields">
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">Opportunity</span>
+                    <select
+                      className="crm-input"
+                      {...proposalForm.register("opportunityId", {
+                        onChange: (event) => {
+                          lastPrefilledOpportunityIdRef.current = null;
+                          setPrefillSource(null);
+                          proposalForm.setValue("opportunityId", event.target.value);
+                          proposalForm.setValue("unitId", "");
+                          proposalForm.setValue("listPrice", "");
+                          proposalForm.setValue("proposedPrice", "");
+                        }
+                      })}
+                    >
+                      <option value="">Select reservation-backed opportunity</option>
+                      {proposalOpportunities.map((opportunity) => (
+                        <option key={opportunity.id} value={opportunity.id}>
+                          {opportunity.opportunityNo} - {opportunity.customer.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {prefillSource ? <p className="crm-proposal-prefill-note crm-form-wide">{prefillSource}</p> : null}
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">Unit</span>
+                    <select
+                      className="crm-input"
+                      {...proposalForm.register("unitId", {
+                        onChange: (event) => {
+                          const unit = proposalUnits.find((item) => item.id === event.target.value);
+                          if (unit) {
+                            applyPricingFromUnit(unit, {
+                              proposedPrice: pickNumber(proposalForm.getValues("proposedPrice")),
+                              proposedPriceCurrency: baseCurrency
+                            });
+                          }
+                        }
+                      })}
+                    >
+                      <option value="">Select unit</option>
+                      {proposalUnits.map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {unit.unitCode} - {formatInBase(unit.basePrice, unit.currencyCode)}
+                          {unit.id === activeOpportunityReservation?.unit.id ? " (Reserved)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Deal Currency</span>
+                    <input className="crm-input crm-input-readonly" disabled readOnly value={baseCurrency} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Show Equivalent In</span>
+                    <select
+                      className="crm-input"
+                      onChange={(event) => setEquivalentCurrencyCode(event.target.value)}
+                      value={equivalentCurrencyCode}
+                    >
+                      {equivalentCurrencyOptions.map((currency) => (
+                        <option key={currency.id} value={currency.currencyCode}>
+                          {currency.currencyCode} - {currency.currencyName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">List Price ({baseCurrency})</span>
+                    <input
+                      className="crm-input"
+                      inputMode="decimal"
+                      {...proposalForm.register("listPrice", {
+                        onChange: (event) => {
+                          proposalForm.setValue("listPrice", event.target.value);
+                          recalculateProposalDiscount(
+                            proposalForm.setValue,
+                            event.target.value,
+                            proposalForm.getValues("proposedPrice")
+                          );
+                        }
+                      })}
+                    />
+                    {listPriceEquivalentHint ? <p className="crm-field-hint">{listPriceEquivalentHint}</p> : null}
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Proposed Price ({baseCurrency})</span>
+                    <input
+                      className="crm-input"
+                      inputMode="decimal"
+                      {...proposalForm.register("proposedPrice", {
+                        onChange: (event) => {
+                          proposalForm.setValue("proposedPrice", event.target.value);
+                          recalculateProposalDiscount(
+                            proposalForm.setValue,
+                            proposalForm.getValues("listPrice"),
+                            event.target.value
+                          );
+                        }
+                      })}
+                    />
+                    {proposedPriceEquivalentHint ? <p className="crm-field-hint">{proposedPriceEquivalentHint}</p> : null}
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Discount Amount ({baseCurrency})</span>
+                    <input className="crm-input crm-input-readonly" readOnly {...proposalForm.register("discountAmount")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Discount %</span>
+                    <input className="crm-input crm-input-readonly" readOnly {...proposalForm.register("discountPercent")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Valid Until</span>
+                    <Controller
+                      control={proposalForm.control}
+                      name="validUntil"
+                      render={({ field }) => (
+                        <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                      )}
+                    />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Approval Threshold %</span>
+                    <input className="crm-input" inputMode="decimal" {...proposalForm.register("approvalThresholdPercent")} />
+                  </label>
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">Remarks</span>
+                    <textarea className="crm-input crm-textarea crm-opportunity-textarea" {...proposalForm.register("remarks")} />
+                  </label>
+                </div>
+                <dl className="crm-detail-list crm-inline-preview">
+                  <div>
+                    <dt>Opportunity</dt>
+                    <dd>{selectedOpportunity?.opportunityNo ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Customer</dt>
+                    <dd>{selectedOpportunity?.customer.name ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Unit Price</dt>
+                    <dd>{formatInBase(selectedUnit?.basePrice, selectedUnit?.currencyCode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Unit Status</dt>
+                    <dd>{selectedUnit?.availabilityStatus.name ?? "-"}</dd>
+                  </div>
+                </dl>
+              </div>
+              <div className="crm-modal-actions crm-modal-actions-sticky">
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
+                  Close
+                </button>
+                <button className="crm-primary-button crm-fit-button" disabled={createMutation.isPending} type="submit">
+                  {createMutation.isPending ? "Creating..." : "Create Proposal"}
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
       ) : null}
 
@@ -494,9 +1046,9 @@ export function ProposalsPage() {
             <tbody>
               {proposalRows.map((proposal) => (
                 <tr
-                  className={selectedProposalId === proposal.id ? "is-selected" : ""}
+                  className={selectedProposalId === proposal.id && proposalDetailModalOpen ? "is-selected" : ""}
                   key={proposal.id}
-                  onClick={() => setSelectedProposalId(proposal.id)}
+                  onClick={() => loadProposal(proposal.id)}
                 >
                   <td>
                     <strong>{proposal.proposalNo}</strong>
@@ -528,150 +1080,252 @@ export function ProposalsPage() {
         />
       </section>
 
-      <section className="crm-panel crm-lead-detail-wide">
-        <h3>Proposal Detail</h3>
-        {selectedProposal ? (
-          <>
-            <div className="crm-detail-title">
+      {proposalDetailModalOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section
+            aria-modal="true"
+            className="crm-modal crm-management-modal crm-lead-detail-modal crm-opportunity-detail-modal"
+            role="dialog"
+          >
+            <div className="crm-panel-header">
               <div>
-                <strong>{selectedProposal.customer.name}</strong>
-                <span>{selectedProposal.proposalNo}</span>
+                <h3>Proposal Detail</h3>
+                <p className="crm-muted-text">{selectedProposal?.proposalNo ?? "Loading proposal..."}</p>
               </div>
-              <span className="crm-status-pill">{selectedProposal.proposalStatus.name}</span>
+              <button className="crm-secondary-button crm-fit-button" onClick={closeProposalDetailModal} type="button">
+                Close
+              </button>
             </div>
-            <WorkflowTracker steps={proposalWorkflowSteps(selectedProposal, formatInBase)} />
-            <dl className="crm-detail-list">
-              <div>
-                <dt>Opportunity</dt>
-                <dd>{selectedProposal.opportunity.opportunityNo}</dd>
-              </div>
-              <div>
-                <dt>Unit</dt>
-                <dd>{selectedProposal.unit.unitCode ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>List Price</dt>
-                <dd>{formatInBase(selectedProposal.listPrice, selectedProposal.currencyCode)}</dd>
-              </div>
-              <div>
-                <dt>Proposed Price</dt>
-                <dd>{formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}</dd>
-              </div>
-              <div>
-                <dt>Discount</dt>
-                <dd>
-                  {formatInBase(selectedProposal.discountAmount, selectedProposal.currencyCode)} /{" "}
-                  {selectedProposal.discountPercent === null ? "-" : `${selectedProposal.discountPercent}%`}
-                </dd>
-              </div>
-              <div>
-                <dt>Valid Until</dt>
-                <dd>{selectedProposal.validUntil ?? "-"}</dd>
-              </div>
-            </dl>
 
-            {selectedProposalNextAction ? (
-              <section className="crm-next-action">
-                <div>
-                  <span className="crm-label">Next Action</span>
-                  <strong>{selectedProposalNextAction.title}</strong>
-                  <p>{selectedProposalNextAction.summary}</p>
+            {proposalDetailQuery.isLoading && !selectedProposal ? (
+              <p className="crm-muted-text crm-opportunity-detail-body">Loading proposal details...</p>
+            ) : selectedProposal ? (
+              <div className="crm-opportunity-detail-body">
+                <div className="crm-detail-title">
+                  <div>
+                    <strong>{selectedProposal.customer.name}</strong>
+                    <span>{selectedProposal.proposalNo}</span>
+                  </div>
+                  <span className="crm-status-pill">{selectedProposal.proposalStatus.name}</span>
                 </div>
-                <div>
-                  <span className="crm-label">Data Needed</span>
-                  <p>{selectedProposalNextAction.dataNeeded}</p>
-                </div>
-              </section>
-            ) : null}
-
-            {!selectedProposalIsClosed ? (
-              <section className="crm-action-grid">
-                <form className="crm-form crm-compact-form">
-                  <h4>Workflow Actions</h4>
-                  <label className="crm-field">
-                    <span className="crm-label">Action Remarks</span>
-                    <textarea className="crm-input crm-textarea" {...actionForm.register("remarks")} />
-                  </label>
-                  <button
-                    className={`crm-full-button ${["DRAFT", "REJECTED"].includes(selectedProposal.proposalStatus.code ?? "") ? "crm-primary-button" : "crm-secondary-button"}`}
-                    disabled={!["DRAFT", "REJECTED"].includes(selectedProposal.proposalStatus.code ?? "") || submitMutation.isPending}
-                    onClick={() => submitMutation.mutate(selectedProposal.id)}
-                    type="button"
-                  >
-                    Submit Proposal
-                  </button>
-                  <button
-                    className={`crm-full-button ${selectedProposal.proposalStatus.code === "SUBMITTED" ? "crm-primary-button" : "crm-secondary-button"}`}
-                    disabled={selectedProposal.proposalStatus.code !== "SUBMITTED" || approveMutation.isPending}
-                    onClick={() => approveMutation.mutate(selectedProposal.id)}
-                    type="button"
-                  >
-                    Approve Proposal
-                  </button>
-                  <button
-                    className={`crm-full-button ${selectedProposal.proposalStatus.code === "APPROVED" ? "crm-primary-button" : "crm-secondary-button"}`}
-                    disabled={selectedProposal.proposalStatus.code !== "APPROVED" || acceptMutation.isPending}
-                    onClick={() => acceptMutation.mutate(selectedProposal.id)}
-                    type="button"
-                  >
-                    Accept Proposal
-                  </button>
-                </form>
-
-                <form className="crm-form crm-compact-form">
-                  <h4>Rejection Control</h4>
-                  <label className="crm-field">
-                    <span className="crm-label">Rejection Reason</span>
-                    <textarea className="crm-input crm-textarea" {...actionForm.register("rejectionReason")} />
-                  </label>
-                  <button
-                    className="crm-secondary-button"
-                    disabled={selectedProposal.proposalStatus.code !== "SUBMITTED" || rejectMutation.isPending}
-                    onClick={() => {
-                      if (actionForm.getValues("rejectionReason").trim() === "") {
-                        setMessage("Enter rejection reason.");
-                        return;
-                      }
-                      rejectMutation.mutate(selectedProposal.id);
-                    }}
-                    type="button"
-                  >
-                    Reject Proposal
-                  </button>
-                </form>
-
-                <section className="crm-activity-list">
-                  <h4>Approval History</h4>
-                  {(selectedProposal.approvalHistory ?? []).map((item) => (
-                    <article key={item.id}>
-                      <strong>{item.approvalOutcome.name}</strong>
-                      <span>{formatDate(item.changedAt)}</span>
-                      <p>{item.remarks ?? "No remarks captured."}</p>
-                    </article>
-                  ))}
-                  {(selectedProposal.approvalHistory ?? []).length === 0 ? (
-                    <p className="crm-muted-text">No approval action captured.</p>
+                <WorkflowTracker steps={proposalWorkflowSteps(selectedProposal, formatInBase)} />
+                <dl className="crm-detail-list">
+                  <div>
+                    <dt>Opportunity</dt>
+                    <dd>{selectedProposal.opportunity.opportunityNo}</dd>
+                  </div>
+                  <div>
+                    <dt>Unit</dt>
+                    <dd>{selectedProposal.unit.unitCode ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>List Price</dt>
+                    <dd>{formatInBase(selectedProposal.listPrice, selectedProposal.currencyCode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Proposed Price</dt>
+                    <dd>{formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Discount</dt>
+                    <dd>
+                      {formatInBase(selectedProposal.discountAmount, selectedProposal.currencyCode)} /{" "}
+                      {selectedProposal.discountPercent === null ? "-" : `${selectedProposal.discountPercent}%`}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Valid Until</dt>
+                    <dd>{selectedProposal.validUntil ?? "-"}</dd>
+                  </div>
+                  {selectedProposal.equivalentCurrencyCode ? (
+                    <div>
+                      <dt>Equivalent Currency</dt>
+                      <dd>{selectedProposal.equivalentCurrencyCode}</dd>
+                    </div>
                   ) : null}
-                </section>
-              </section>
+                </dl>
+
+                {selectedProposalAuditLines.length > 0 ? (
+                  <section className="crm-activity-list">
+                    <h4>Pricing Audit</h4>
+                    {selectedProposalAuditLines.map((line) => (
+                      <p className="crm-muted-text" key={line}>
+                        {line}
+                      </p>
+                    ))}
+                  </section>
+                ) : null}
+
+                {selectedProposalNextAction ? (
+                  <section className="crm-next-action">
+                    <div>
+                      <span className="crm-label">Next Action</span>
+                      <strong>{selectedProposalNextAction.title}</strong>
+                      <p>{selectedProposalNextAction.summary}</p>
+                    </div>
+                    <div>
+                      <span className="crm-label">Data Needed</span>
+                      <p>{selectedProposalNextAction.dataNeeded}</p>
+                    </div>
+                  </section>
+                ) : null}
+
+                {!selectedProposalIsClosed ? (
+                  <>
+                    <section className="crm-opportunity-actions">
+                    <div className="crm-opportunity-action-card crm-opportunity-action-card-wide">
+                      <div className="crm-opportunity-action-card-header">
+                        <h4>Workflow Actions</h4>
+                        <p className="crm-muted-text">
+                          Current status: {selectedProposal.proposalStatus.name ?? "-"}
+                          {selectedProposal.approvalRequired ? " · Management approval required" : ""}
+                        </p>
+                      </div>
+                      <div className="crm-opportunity-action-card-fields">
+                        <label className="crm-field">
+                          <span className="crm-label">Action Remarks</span>
+                          <textarea
+                            className="crm-input crm-textarea crm-opportunity-textarea"
+                            placeholder="Optional remarks for submit, approve, or accept"
+                            {...actionForm.register("remarks")}
+                          />
+                        </label>
+                      </div>
+                      <div className="crm-opportunity-action-card-footer">
+                        <button
+                          className={`crm-opportunity-action-button ${["DRAFT", "REJECTED"].includes(selectedProposal.proposalStatus.code ?? "") ? "crm-primary-button" : "crm-secondary-button"}`}
+                          disabled={!["DRAFT", "REJECTED"].includes(selectedProposal.proposalStatus.code ?? "") || submitMutation.isPending}
+                          onClick={() => submitMutation.mutate(selectedProposal.id)}
+                          type="button"
+                        >
+                          {submitMutation.isPending ? "Submitting..." : "Submit Proposal"}
+                        </button>
+                        <button
+                          className={`crm-opportunity-action-button ${selectedProposal.proposalStatus.code === "SUBMITTED" ? "crm-primary-button" : "crm-secondary-button"}`}
+                          disabled={selectedProposal.proposalStatus.code !== "SUBMITTED" || approveMutation.isPending}
+                          onClick={() => approveMutation.mutate(selectedProposal.id)}
+                          type="button"
+                        >
+                          {approveMutation.isPending ? "Approving..." : "Approve Proposal"}
+                        </button>
+                        <button
+                          className={`crm-opportunity-action-button ${selectedProposal.proposalStatus.code === "APPROVED" ? "crm-primary-button" : "crm-secondary-button"}`}
+                          disabled={selectedProposal.proposalStatus.code !== "APPROVED" || acceptMutation.isPending}
+                          onClick={() => acceptMutation.mutate(selectedProposal.id)}
+                          type="button"
+                        >
+                          {acceptMutation.isPending ? "Accepting..." : "Accept Proposal"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <form
+                      className="crm-opportunity-action-card crm-opportunity-lost-card"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (actionForm.getValues("rejectionReason").trim() === "") {
+                          setMessage("Enter rejection reason.");
+                          return;
+                        }
+                        rejectMutation.mutate(selectedProposal.id);
+                      }}
+                    >
+                      <div className="crm-opportunity-action-card-header">
+                        <h4>Rejection Control</h4>
+                        <p className="crm-muted-text">Reject a submitted proposal and return it for revision.</p>
+                      </div>
+                      <div className="crm-opportunity-lost-fields">
+                        <label className="crm-field">
+                          <span className="crm-label">
+                            Rejection Reason <span className="crm-label-required-inline">*</span>
+                          </span>
+                          <textarea
+                            className="crm-input crm-textarea crm-opportunity-textarea"
+                            placeholder="Reason required when rejecting a submitted proposal"
+                            {...actionForm.register("rejectionReason")}
+                          />
+                        </label>
+                        <div className="crm-opportunity-action-card-footer crm-opportunity-lost-footer">
+                          <button
+                            className="crm-secondary-button crm-opportunity-action-button"
+                            disabled={selectedProposal.proposalStatus.code !== "SUBMITTED" || rejectMutation.isPending}
+                            type="submit"
+                          >
+                            {rejectMutation.isPending ? "Rejecting..." : "Reject Proposal"}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  </section>
+
+                  <section className="crm-activity-list">
+                    <h4>Approval History</h4>
+                    {(selectedProposal.approvalHistory ?? []).map((item) => (
+                      <article key={item.id}>
+                        <strong>{item.approvalOutcome.name}</strong>
+                        <span>{formatDate(item.changedAt)}</span>
+                        <p>{item.remarks ?? "No remarks captured."}</p>
+                      </article>
+                    ))}
+                    {(selectedProposal.approvalHistory ?? []).length === 0 ? (
+                      <p className="crm-muted-text">No approval action captured.</p>
+                    ) : null}
+                  </section>
+                  </>
+                ) : (
+                  <>
+                    <section className="crm-next-action">
+                      <div>
+                        <span className="crm-label">Close-Off Stage</span>
+                        <strong>Accepted</strong>
+                        <p>Proposal workflow is complete. Continue to contract creation when ready.</p>
+                      </div>
+                      <div>
+                        <span className="crm-label">Accepted By</span>
+                        <p>{selectedProposal.acceptedBy.name ?? "-"}</p>
+                      </div>
+                    </section>
+
+                    {activeProposalReservation ? (
+                      <section className="crm-opportunity-actions">
+                        <div className="crm-opportunity-action-card crm-opportunity-action-card-wide">
+                          <div className="crm-opportunity-action-card-header">
+                            <h4>Create Contract</h4>
+                            <p className="crm-muted-text">
+                              Proposal accepted at {formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}.
+                              Open contract form with reservation {activeProposalReservation.reservationNo} and value pre-filled.
+                            </p>
+                          </div>
+                          <div className="crm-opportunity-action-card-footer">
+                            <button
+                              className="crm-secondary-button crm-opportunity-action-button"
+                              onClick={() => navigate(`/reservations?selected=${activeProposalReservation.id}`)}
+                              type="button"
+                            >
+                              View Reservation
+                            </button>
+                            <button
+                              className="crm-primary-button crm-opportunity-action-button"
+                              onClick={() => openContractHandoff(selectedProposal)}
+                              type="button"
+                            >
+                              Create Contract
+                            </button>
+                          </div>
+                        </div>
+                      </section>
+                    ) : (
+                      <p className="crm-muted-text">No approved reservation is available to create a contract.</p>
+                    )}
+                  </>
+                )}
+              </div>
             ) : (
-              <section className="crm-next-action">
-                <div>
-                  <span className="crm-label">Close-Off Stage</span>
-                  <strong>Accepted</strong>
-                  <p>Proposal workflow is complete for this baseline.</p>
-                </div>
-                <div>
-                  <span className="crm-label">Accepted By</span>
-                  <p>{selectedProposal.acceptedBy.name ?? "-"}</p>
-                </div>
-              </section>
+              <p className="crm-muted-text crm-opportunity-detail-body">Proposal details could not be loaded.</p>
             )}
-          </>
-        ) : (
-          <p className="crm-muted-text">Select a proposal to review pricing, approval status, and workflow actions.</p>
-        )}
-      </section>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

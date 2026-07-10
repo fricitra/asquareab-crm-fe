@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getApiErrorMessage } from "../api/auth";
 import { getDashboardSummary } from "../api/dashboard";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { RecentActivityList } from "../shared/RecentActivityList";
 import { useAuthStore } from "../store/auth-store";
 
@@ -41,16 +42,16 @@ export function RecentActivityPage() {
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Activity Feed</p>
-          <h2>Recent Activity</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Recent Activity</h2>
+            <CurrencyBadge />
+          </div>
           <p className="crm-muted-text">Latest updates across leads, opportunities, proposals, reservations, and contracts.</p>
         </div>
       </section>
 
       <section className="crm-panel">
-        <RecentActivityList
-          items={activityQuery.data.recentActivity}
-          currencyCode={activityQuery.data.displayCurrency}
-        />
+        <RecentActivityList items={activityQuery.data.recentActivity} />
       </section>
     </div>
   );

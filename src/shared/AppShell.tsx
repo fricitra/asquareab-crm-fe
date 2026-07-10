@@ -23,11 +23,11 @@ const navGroups: NavGroup[] = [
   {
     id: "customer-workflow",
     label: "Customer Workflow",
-    items: [
+      items: [
       { label: "Leads", to: "/leads", icon: "leads" },
       { label: "Opportunities", to: "/opportunities", icon: "opportunities" },
-      { label: "Proposals", to: "/proposals", icon: "proposals" },
       { label: "Reservations", to: "/reservations", icon: "reservations" },
+      { label: "Proposals", to: "/proposals", icon: "proposals" },
       { label: "Contracts", to: "/contracts", icon: "contracts" }
     ]
   },

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCurrencyDisplayContext } from "../api/currencies";
-import { convertToBase, formatMoney } from "../lib/format-money";
+import { convertToBase, convertFromBase, formatAmount, formatMoney } from "../lib/format-money";
 import { useAuthStore } from "../store/auth-store";
 
 export function useCurrencyContext() {
@@ -28,6 +28,8 @@ export function useMoneyFormatter() {
     toBase: (value: number | null | undefined, currencyCode?: string | null) =>
       convertToBase(value, currencyCode, baseCurrency, ratesToBase),
     formatInBase: (value: number | null | undefined, currencyCode?: string | null) =>
-      formatMoney(convertToBase(value, currencyCode, baseCurrency, ratesToBase), baseCurrency)
+      formatAmount(convertToBase(value, currencyCode, baseCurrency, ratesToBase)),
+    fromBase: (value: number | null | undefined, currencyCode?: string | null) =>
+      convertFromBase(value, currencyCode, baseCurrency, ratesToBase)
   };
 }

@@ -1,13 +1,9 @@
 import type { DashboardActivity } from "../api/dashboard";
-import { formatMoney } from "../lib/format-money";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 
-export function RecentActivityList({
-  items,
-  currencyCode = "KES"
-}: {
-  items: DashboardActivity[];
-  currencyCode?: string;
-}) {
+export function RecentActivityList({ items }: { items: DashboardActivity[] }) {
+  const { formatInBase } = useMoneyFormatter();
+
   if (!items.length) {
     return <p className="crm-muted-text">No recent activity yet.</p>;
   }
@@ -32,7 +28,7 @@ export function RecentActivityList({
             <span>{item.title ?? "-"}</span>
             <span>
               {item.amount
-                ? formatMoney(item.amount, item.currencyCode ?? currencyCode)
+                ? formatInBase(item.amount, item.currencyCode)
                 : item.happenedAt
                   ? new Date(item.happenedAt).toLocaleString()
                   : "-"}

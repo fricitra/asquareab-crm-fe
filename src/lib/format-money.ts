@@ -19,6 +19,27 @@ export function convertToBase(
   return Number((value * rate).toFixed(2));
 }
 
+export function convertFromBase(
+  amount: number | null | undefined,
+  currencyCode: string | null | undefined,
+  baseCurrencyCode: string,
+  ratesToBase: Record<string, number>
+) {
+  const value = amount ?? 0;
+  const targetCurrency = (currencyCode ?? baseCurrencyCode).trim().toUpperCase();
+
+  if (targetCurrency === baseCurrencyCode) {
+    return value;
+  }
+
+  const rate = ratesToBase[targetCurrency];
+  if (!rate) {
+    return null;
+  }
+
+  return Number((value / rate).toFixed(2));
+}
+
 export function formatAmount(
   value: number | null | undefined,
   options?: { compactAbove?: number }

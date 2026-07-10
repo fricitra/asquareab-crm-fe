@@ -276,6 +276,7 @@ export async function listUnits(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Unit[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { available: number; reserved: number; value: number };
   }>("/inventory/units", {
     params: buildListQueryParams(params)
   });

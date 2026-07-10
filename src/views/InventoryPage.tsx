@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm, type UseFormRegister } from "react-hook-form";
+import { useForm, Controller, type UseFormRegister } from "react-hook-form";
 import {
   createProject,
   createUnit,
@@ -22,6 +22,8 @@ import {
 import { listCurrencies } from "../api/currencies";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
+import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 
@@ -477,12 +479,15 @@ export function InventoryPage() {
   const activeUnitDetailTab = unitDetailTabs.find((tab) => tab.id === unitDetailTab) ?? unitDetailTabs[0];
 
   const stats = useMemo(() => {
-    const totalUnits = unitsQuery.data?.pagination.total ?? 0;
-    const available = unitRows.filter((unit) => unit.availabilityStatus.code === "AVAILABLE").length;
-    const reserved = unitRows.filter((unit) => unit.availabilityStatus.code === "RESERVED").length;
-    const value = unitRows.reduce((sum, unit) => sum + toBase(unit.basePrice, unit.currencyCode), 0);
-    return { projects: projectsQuery.data?.pagination.total ?? 0, units: totalUnits, available, reserved, value };
-  }, [projectsQuery.data?.pagination.total, unitRows, unitsQuery.data?.pagination.total, toBase]);
+    const unitSummary = unitsQuery.data?.summary;
+    return {
+      projects: projectsQuery.data?.pagination.total ?? 0,
+      units: unitsQuery.data?.pagination.total ?? 0,
+      available: unitSummary?.available ?? 0,
+      reserved: unitSummary?.reserved ?? 0,
+      value: unitSummary?.value ?? 0
+    };
+  }, [projectsQuery.data?.pagination.total, unitsQuery.data]);
 
   const refreshInventory = (successMessage: string) => {
     setMessage(successMessage);
@@ -897,7 +902,10 @@ export function InventoryPage() {
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Inventory</p>
-          <h2>Projects and Units</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Projects and Units</h2>
+            <CurrencyBadge />
+          </div>
         </div>
       </section>
 
@@ -1207,8 +1215,26 @@ export function InventoryPage() {
 
             {unitEditMode && unitDetailTab === "sales" ? (
               <form className="crm-form crm-catalogue-form" onSubmit={salesForm.handleSubmit((values) => saveSection("sales", values))}>
-                <label className="crm-field"><span className="crm-label">Launch Date</span><input className="crm-input" type="date" {...salesForm.register("launchDate")} /></label>
-                <label className="crm-field"><span className="crm-label">Sales Release Date</span><input className="crm-input" type="date" {...salesForm.register("salesReleaseDate")} /></label>
+                <label className="crm-field">
+                  <span className="crm-label">Launch Date</span>
+                  <Controller
+                    control={salesForm.control}
+                    name="launchDate"
+                    render={({ field }) => (
+                      <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                    )}
+                  />
+                </label>
+                <label className="crm-field">
+                  <span className="crm-label">Sales Release Date</span>
+                  <Controller
+                    control={salesForm.control}
+                    name="salesReleaseDate"
+                    render={({ field }) => (
+                      <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                    )}
+                  />
+                </label>
                 <label className="crm-field"><span className="crm-label">Base Selling Price</span><input className="crm-input" {...salesForm.register("baseSellingPrice")} /></label>
                 <label className="crm-field"><span className="crm-label">Premium Amount</span><input className="crm-input" {...salesForm.register("premiumAmount")} /></label>
                 <label className="crm-field"><span className="crm-label">Discount Ceiling %</span><input className="crm-input" {...salesForm.register("discountCeilingPct")} /></label>

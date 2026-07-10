@@ -61,6 +61,16 @@ export type ProposalUnitSnapshot = {
   remarks: string | null;
 };
 
+export type ProposalPricingContext = {
+  equivalentCurrencyCode?: string | null;
+  listPriceSource?: { amount: number; currencyCode: string };
+  listPriceBase?: { amount: number; currencyCode: string };
+  proposedPriceSource?: { amount: number; currencyCode: string };
+  proposedPriceBase?: { amount: number; currencyCode: string };
+  reservationNo?: string | null;
+  ratesUsed?: Record<string, number>;
+};
+
 export type Proposal = {
   id: string;
   proposalNo: string;
@@ -119,6 +129,8 @@ export type Proposal = {
   updatedAt: string | null;
   updatedBy: WorkflowUser;
   remarks: string | null;
+  equivalentCurrencyCode?: string | null;
+  pricingContextJson?: ProposalPricingContext | null;
   unitSnapshot?: ProposalUnitSnapshot | null;
   approvalHistory?: ProposalApprovalHistory[];
 };
@@ -133,6 +145,8 @@ export type CreateProposalPayload = {
   discountAmount?: number;
   discountPercent?: number;
   approvalThresholdPercent?: number;
+  equivalentCurrencyCode?: string;
+  pricingContextJson?: ProposalPricingContext;
   remarks?: string;
 };
 
@@ -140,6 +154,7 @@ export async function listProposals(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: Proposal[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { approvalRequired: number; approved: number; value: number };
   }>("/proposals", {
     params: buildListQueryParams(params)
   });

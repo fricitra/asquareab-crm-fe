@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { listCurrencies } from "../api/currencies";
-import { listUnits } from "../api/inventory";
 import { listOpportunities } from "../api/opportunities";
 import {
   approveReservation,
@@ -14,16 +15,28 @@ import {
 } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
+import { DateField } from "../shared/DateField";
+import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
+import { UnitPickerDialog } from "../shared/UnitPickerDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
 type ReservationFormValues = {
   opportunityId: string;
   unitId: string;
+  unitCode: string;
   reservationAmount: string;
   currencyCode: string;
   expiryDate: string;
   remarks: string;
+};
+
+type NoticeState = {
+  open: boolean;
+  title: string;
+  message: string;
+  variant: "error" | "success" | "info";
 };
 
 function pickString(value: string) {
@@ -36,6 +49,21 @@ function pickNumber(value: string) {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(value)) : "-";
+}
+
+function defaultReservationExpiryDate() {
+  const expiry = new Date();
+  expiry.setDate(expiry.getDate() + 30);
+  return expiry.toISOString().slice(0, 10);
+}
+
+function getApiErrorMessage(error: unknown, fallback: string) {
+  if (axios.isAxiosError(error)) {
+    const message = (error.response?.data as { message?: string } | undefined)?.message;
+    return message && message.trim() !== "" ? message : fallback;
+  }
+
+  return fallback;
 }
 
 function reservationWorkflowSteps(
@@ -94,18 +122,38 @@ function reservationWorkflowSteps(
 
 export function ReservationsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const processedHandoffRef = useRef<string | null>(null);
   const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedReservationId, setSelectedReservationId] = useState<string | null>(null);
+  const [reservationDetailModalOpen, setReservationDetailModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+  const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
+    open: false,
+    title: "",
+    message: "",
+    variant: "info"
+  });
+
+  const showNotice = (title: string, message: string, variant: NoticeState["variant"]) => {
+    setNoticeDialog({ open: true, title, message, variant });
+  };
+
+  const closeNotice = () => {
+    setNoticeDialog((current) => ({ ...current, open: false }));
+  };
 
   const reservationForm = useForm<ReservationFormValues>({
     defaultValues: {
       opportunityId: "",
       unitId: "",
+      unitCode: "",
       reservationAmount: "",
       currencyCode: defaultContractCurrency,
       expiryDate: "",
@@ -121,33 +169,53 @@ export function ReservationsPage() {
         limit: pageSize,
         offset: (page - 1) * pageSize
       }),
-    staleTime: 10_000
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
   });
 
   useEffect(() => {
     setPage(1);
   }, [search]);
 
+  useEffect(() => {
+    const selectedId = searchParams.get("selected");
+    if (!selectedId || processedHandoffRef.current === selectedId) {
+      return;
+    }
+
+    processedHandoffRef.current = selectedId;
+    setSelectedReservationId(selectedId);
+    setReservationDetailModalOpen(true);
+
+    const createNotice = (location.state as { createNotice?: string } | null)?.createNotice;
+    if (createNotice) {
+      showNotice("Reservation Created", `Reservation ${createNotice} was created successfully.`, "success");
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("selected");
+    setSearchParams(nextParams, { replace: true });
+  }, [location.state, searchParams, setSearchParams]);
+
   const reservationDetailQuery = useQuery({
     queryKey: ["reservation", selectedReservationId],
     queryFn: () => getReservation(selectedReservationId ?? ""),
-    enabled: Boolean(selectedReservationId)
+    enabled: Boolean(selectedReservationId && reservationDetailModalOpen),
+    refetchOnWindowFocus: false
   });
 
   const opportunitiesQuery = useQuery({
     queryKey: ["opportunities", "reservation-select"],
     queryFn: () => listOpportunities({ limit: DROPDOWN_LIST_LIMIT }),
-    staleTime: 10_000
+    enabled: createOpen,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
   });
 
-  const unitsQuery = useQuery({
-    queryKey: ["inventory", "units", "reservation-select"],
-    queryFn: () => listUnits({ limit: DROPDOWN_LIST_LIMIT }),
-    staleTime: 10_000
-  });
   const currenciesQuery = useQuery({
     queryKey: ["currencies", "reservation-dropdown"],
     queryFn: () => listCurrencies({ dropdownOnly: true, activeOnly: true }),
+    enabled: createOpen,
     staleTime: 60_000
   });
 
@@ -162,59 +230,143 @@ export function ReservationsPage() {
         remarks: pickString(values.remarks)
       }),
     onSuccess: (reservation) => {
-      setMessage("Reservation created.");
       setCreateOpen(false);
       setSelectedReservationId(reservation.id);
-      reservationForm.reset({ opportunityId: "", unitId: "", reservationAmount: "", currencyCode: defaultContractCurrency, expiryDate: "", remarks: "" });
+      setReservationDetailModalOpen(true);
+      reservationForm.reset({
+        opportunityId: "",
+        unitId: "",
+        unitCode: "",
+        reservationAmount: "",
+        currencyCode: defaultContractCurrency,
+        expiryDate: "",
+        remarks: ""
+      });
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
+      void queryClient.invalidateQueries({ queryKey: ["opportunity"] });
+      showNotice("Reservation Created", `Reservation ${reservation.reservationNo} was created successfully.`, "success");
     },
-    onError: () => setMessage("Reservation could not be created.")
+    onError: (error) => {
+      showNotice("Reservation Failed", getApiErrorMessage(error, "Reservation could not be created."), "error");
+    }
   });
 
   const cancelMutation = useMutation({
     mutationFn: (reservationId: string) => cancelReservation(reservationId, "Cancelled from CRM workspace"),
     onSuccess: (reservation) => {
-      setMessage("Reservation cancelled.");
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
+      showNotice("Reservation Cancelled", `Reservation ${reservation.reservationNo} was cancelled.`, "success");
     },
-    onError: () => setMessage("Reservation could not be cancelled.")
+    onError: (error) => {
+      showNotice("Cancellation Failed", getApiErrorMessage(error, "Reservation could not be cancelled."), "error");
+    }
   });
 
   const approveMutation = useMutation({
     mutationFn: (reservationId: string) => approveReservation(reservationId, "Reservation approved from CRM workspace"),
     onSuccess: (reservation) => {
-      setMessage("Reservation approved.");
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
+      void queryClient.invalidateQueries({ queryKey: ["opportunity"] });
+      showNotice("Reservation Approved", `Reservation ${reservation.reservationNo} was approved.`, "success");
     },
-    onError: () => setMessage("Reservation could not be approved.")
+    onError: (error) => {
+      showNotice("Approval Failed", getApiErrorMessage(error, "Reservation could not be approved."), "error");
+    }
   });
 
   const reservationRows = reservationsQuery.data?.items ?? [];
-  const availableUnits = (unitsQuery.data?.items ?? []).filter((unit) => unit.availabilityStatus.code === "AVAILABLE");
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedReservation = reservationDetailQuery.data;
+  const reservationReadyOpportunities = (opportunitiesQuery.data?.items ?? []).filter(
+    (opportunity) => opportunity.opportunityStage.name === "Reservation Ready" && opportunity.status !== "LOST"
+  );
+  const selectedOpportunity = reservationReadyOpportunities.find(
+    (opportunity) => opportunity.id === reservationForm.watch("opportunityId")
+  );
 
   const stats = useMemo(() => {
-    const total = reservationsQuery.data?.pagination.total ?? 0;
-    const active = reservationRows.filter((reservation) => reservation.isActive).length;
-    const cancelled = reservationRows.filter((reservation) => reservation.reservationStatus.code === "CANCELLED").length;
-    const amount = reservationRows.reduce(
-      (sum, reservation) => sum + toBase(reservation.reservationAmount, reservation.currencyCode),
-      0
-    );
-    return { total, active, cancelled, amount };
-  }, [reservationRows, reservationsQuery.data?.pagination.total, toBase]);
+    const summary = reservationsQuery.data?.summary;
+    return {
+      total: reservationsQuery.data?.pagination.total ?? 0,
+      active: summary?.active ?? 0,
+      cancelled: summary?.cancelled ?? 0,
+      amount: summary?.amount ?? 0
+    };
+  }, [reservationsQuery.data]);
 
-  const onReservationSubmit = reservationForm.handleSubmit((values) => {
-    if (!values.opportunityId || !values.unitId) {
-      setMessage("Select an opportunity and an available unit.");
+  const openCreateModal = () => {
+    reservationForm.reset({
+      opportunityId: "",
+      unitId: "",
+      unitCode: "",
+      reservationAmount: "",
+      currencyCode: defaultContractCurrency,
+      expiryDate: defaultReservationExpiryDate(),
+      remarks: ""
+    });
+    setCreateOpen(true);
+  };
+
+  const loadReservation = (reservationId: string) => {
+    setSelectedReservationId(reservationId);
+    setReservationDetailModalOpen(true);
+  };
+
+  const closeReservationDetailModal = () => {
+    setReservationDetailModalOpen(false);
+    setSelectedReservationId(null);
+  };
+
+  useEffect(() => {
+    if (!reservationDetailModalOpen) {
       return;
     }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !noticeDialog.open) {
+        event.preventDefault();
+        closeReservationDetailModal();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [noticeDialog.open, reservationDetailModalOpen]);
+
+  useEffect(() => {
+    if (!createOpen) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !noticeDialog.open && !unitPickerOpen) {
+        event.preventDefault();
+        setCreateOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [createOpen, noticeDialog.open, unitPickerOpen]);
+
+  const onReservationSubmit = reservationForm.handleSubmit((values) => {
+    if (!values.opportunityId) {
+      showNotice("Opportunity Required", "Select a reservation-ready opportunity.", "error");
+      return;
+    }
+
+    if (!values.unitId) {
+      showNotice("Unit Required", "Select an available unit before creating the reservation.", "error");
+      return;
+    }
+
     createMutation.mutate(values);
   });
 
@@ -223,9 +375,12 @@ export function ReservationsPage() {
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Reservations</p>
-          <h2>Unit Reservations</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Unit Reservations</h2>
+            <CurrencyBadge />
+          </div>
         </div>
-        <button className="crm-primary-button" onClick={() => setCreateOpen(true)} type="button">
+        <button className="crm-primary-button" onClick={openCreateModal} type="button">
           New Reservation
         </button>
       </section>
@@ -249,66 +404,92 @@ export function ReservationsPage() {
         </article>
       </section>
 
-      {message ? <div className="crm-error-banner">{message}</div> : null}
-
       {createOpen ? (
         <div className="crm-modal-backdrop" role="presentation">
-      <section aria-modal="true" className="crm-modal crm-management-modal" role="dialog">
-        <div className="crm-panel-header">
-          <h3>Create Reservation</h3>
-          <button className="crm-secondary-button" onClick={() => setCreateOpen(false)} type="button">Close</button>
-        </div>
-        <form className="crm-form crm-reservation-form" onSubmit={onReservationSubmit}>
-          <label className="crm-field">
-            <span className="crm-label">Opportunity</span>
-            <select className="crm-input" {...reservationForm.register("opportunityId")}>
-              <option value="">Select opportunity</option>
-              {(opportunitiesQuery.data?.items ?? []).map((opportunity) => (
-                <option key={opportunity.id} value={opportunity.id}>
-                  {opportunity.opportunityNo} - {opportunity.customer.name ?? "Customer"}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Available Unit</span>
-            <select className="crm-input" {...reservationForm.register("unitId")}>
-              <option value="">Select unit</option>
-              {availableUnits.map((unit) => (
-                <option key={unit.id} value={unit.id}>
-                  {unit.unitCode} - {formatInBase(unit.basePrice, unit.currencyCode)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Amount</span>
-            <input className="crm-input" {...reservationForm.register("reservationAmount")} />
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Currency</span>
-            <select className="crm-input" {...reservationForm.register("currencyCode")}>
-              <option value="">Select currency</option>
-              {currencyRows.map((currency) => (
-                <option key={currency.id} value={currency.currencyCode}>
-                  {currency.currencyCode} - {currency.currencyName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="crm-field">
-            <span className="crm-label">Expiry</span>
-            <input className="crm-input" type="date" {...reservationForm.register("expiryDate")} />
-          </label>
-          <label className="crm-field crm-form-wide">
-            <span className="crm-label">Remarks</span>
-            <input className="crm-input" {...reservationForm.register("remarks")} />
-          </label>
-          <button className="crm-primary-button crm-form-action" disabled={createMutation.isPending} type="submit">
-            {createMutation.isPending ? "Creating..." : "Create Reservation"}
-          </button>
-        </form>
-      </section>
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-reservation-modal" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>Create Reservation</h3>
+                <p className="crm-muted-text">Only opportunities at Reservation Ready stage can be reserved.</p>
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
+                Close
+              </button>
+            </div>
+            <form className="crm-reservation-modal-form" onSubmit={onReservationSubmit}>
+              <div className="crm-reservation-modal-body">
+                <div className="crm-reservation-modal-fields">
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">
+                      Opportunity <span className="crm-label-required-inline">*</span>
+                    </span>
+                    <select className="crm-input" {...reservationForm.register("opportunityId")}>
+                      <option value="">Select reservation-ready opportunity</option>
+                      {reservationReadyOpportunities.map((opportunity) => (
+                        <option key={opportunity.id} value={opportunity.id}>
+                          {opportunity.opportunityNo} - {opportunity.customer.name ?? "Customer"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <input type="hidden" {...reservationForm.register("unitId")} />
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">
+                      Unit <span className="crm-label-required-inline">*</span>
+                    </span>
+                    <div className="crm-opportunity-unit-picker-row">
+                      <input
+                        className="crm-input"
+                        placeholder="Select an available unit"
+                        readOnly
+                        value={reservationForm.watch("unitCode") || ""}
+                      />
+                      <button className="crm-secondary-button crm-fit-button" onClick={() => setUnitPickerOpen(true)} type="button">
+                        Choose Unit
+                      </button>
+                    </div>
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Amount</span>
+                    <input className="crm-input" inputMode="decimal" {...reservationForm.register("reservationAmount")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Currency</span>
+                    <select className="crm-input" {...reservationForm.register("currencyCode")}>
+                      <option value="">Select currency</option>
+                      {currencyRows.map((currency) => (
+                        <option key={currency.id} value={currency.currencyCode}>
+                          {currency.currencyCode} - {currency.currencyName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Expiry</span>
+                    <Controller
+                      control={reservationForm.control}
+                      name="expiryDate"
+                      render={({ field }) => (
+                        <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                      )}
+                    />
+                  </label>
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">Remarks</span>
+                    <textarea className="crm-input crm-textarea crm-opportunity-textarea" {...reservationForm.register("remarks")} />
+                  </label>
+                </div>
+              </div>
+              <div className="crm-modal-actions crm-modal-actions-sticky">
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
+                  Close
+                </button>
+                <button className="crm-primary-button crm-fit-button" disabled={createMutation.isPending} type="submit">
+                  {createMutation.isPending ? "Creating..." : "Create Reservation"}
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
       ) : null}
 
@@ -340,7 +521,7 @@ export function ReservationsPage() {
                 <tr
                   className={selectedReservationId === reservation.id ? "is-selected" : ""}
                   key={reservation.id}
-                  onClick={() => setSelectedReservationId(reservation.id)}
+                  onClick={() => loadReservation(reservation.id)}
                 >
                   <td>
                     <strong>{reservation.reservationNo}</strong>
@@ -376,84 +557,131 @@ export function ReservationsPage() {
         />
       </section>
 
-      <section className="crm-panel crm-lead-detail-wide">
-        <h3>Reservation Detail</h3>
-        {selectedReservation ? (
-          <>
-            <div className="crm-detail-title">
+      {reservationDetailModalOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-opportunity-detail-modal" role="dialog">
+            <div className="crm-panel-header">
               <div>
-                <strong>{selectedReservation.reservationNo}</strong>
-                <span>{selectedReservation.customer.name ?? "Customer"}</span>
+                <h3>Reservation Detail</h3>
+                <p className="crm-muted-text">{selectedReservation?.reservationNo ?? "Loading reservation..."}</p>
               </div>
-              <span className={`crm-status-pill crm-status-${selectedReservation.reservationStatus.code?.toLowerCase() ?? "default"}`}>
-                {selectedReservation.reservationStatus.name ?? selectedReservation.status}
-              </span>
+              <button className="crm-secondary-button crm-fit-button" onClick={closeReservationDetailModal} type="button">
+                Close
+              </button>
             </div>
-            <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation, formatInBase)} />
+            {selectedReservation ? (
+              <div className="crm-opportunity-detail-body">
+                <div className="crm-detail-title">
+                  <div>
+                    <strong>{selectedReservation.reservationNo}</strong>
+                    <span>{selectedReservation.customer.name ?? "Customer"}</span>
+                  </div>
+                  <span className={`crm-status-pill crm-status-${selectedReservation.reservationStatus.code?.toLowerCase() ?? "default"}`}>
+                    {selectedReservation.reservationStatus.name ?? selectedReservation.status}
+                  </span>
+                </div>
+                <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation, formatInBase)} />
 
-            <dl className="crm-detail-list">
-              <div>
-                <dt>Opportunity</dt>
-                <dd>{selectedReservation.opportunity.opportunityNo ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>Unit</dt>
-                <dd>{selectedReservation.unit.unitCode ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>Project</dt>
-                <dd>{selectedReservation.project.projectCode ?? "-"}</dd>
-              </div>
-              <div>
-                <dt>Amount</dt>
-                <dd>{formatInBase(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
-              </div>
-              <div>
-                <dt>Date</dt>
-                <dd>{formatDate(selectedReservation.reservationDate)}</dd>
-              </div>
-              <div>
-                <dt>Expiry</dt>
-                <dd>{formatDate(selectedReservation.expiryDate)}</dd>
-              </div>
-            </dl>
+                <dl className="crm-detail-list">
+                  <div>
+                    <dt>Opportunity</dt>
+                    <dd>{selectedReservation.opportunity.opportunityNo ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Unit</dt>
+                    <dd>{selectedReservation.unit.unitCode ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Project</dt>
+                    <dd>{selectedReservation.project.projectCode ?? "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Amount</dt>
+                    <dd>{formatInBase(selectedReservation.reservationAmount, selectedReservation.currencyCode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Date</dt>
+                    <dd>{formatDate(selectedReservation.reservationDate)}</dd>
+                  </div>
+                  <div>
+                    <dt>Expiry</dt>
+                    <dd>{formatDate(selectedReservation.expiryDate)}</dd>
+                  </div>
+                </dl>
 
-            <button
-              className="crm-secondary-button crm-full-button"
-              disabled={!selectedReservation.isActive || cancelMutation.isPending}
-              onClick={() => cancelMutation.mutate(selectedReservation.id)}
-              type="button"
-            >
-              {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
-            </button>
+                <div className="crm-opportunity-action-card-footer">
+                  <button
+                    className="crm-secondary-button crm-opportunity-action-button"
+                    disabled={!selectedReservation.isActive || cancelMutation.isPending}
+                    onClick={() => cancelMutation.mutate(selectedReservation.id)}
+                    type="button"
+                  >
+                    {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
+                  </button>
+                  {selectedReservation.reservationStatus.code === "APPROVED" &&
+                  selectedReservation.opportunity.id ? (
+                    <button
+                      className="crm-primary-button crm-opportunity-action-button"
+                      onClick={() =>
+                        navigate(`/proposals?createFor=${selectedReservation.opportunity.id}`, {
+                          state: { fromReservation: selectedReservation.reservationNo }
+                        })
+                      }
+                      type="button"
+                    >
+                      Create Proposal
+                    </button>
+                  ) : (
+                    <button
+                      className="crm-primary-button crm-opportunity-action-button"
+                      disabled={
+                        !selectedReservation.isActive ||
+                        selectedReservation.reservationStatus.code === "APPROVED" ||
+                        selectedReservation.reservationStatus.code === "CANCELLED" ||
+                        approveMutation.isPending
+                      }
+                      onClick={() => approveMutation.mutate(selectedReservation.id)}
+                      type="button"
+                    >
+                      {selectedReservation.reservationStatus.code === "APPROVED"
+                        ? "Approved"
+                        : approveMutation.isPending
+                          ? "Approving..."
+                          : "Approve Reservation"}
+                    </button>
+                  )}
+                </div>
 
-            <button
-              className="crm-primary-button crm-fit-button"
-              disabled={
-                !selectedReservation.isActive ||
-                selectedReservation.reservationStatus.code === "APPROVED" ||
-                selectedReservation.reservationStatus.code === "CANCELLED" ||
-                approveMutation.isPending
-              }
-              onClick={() => approveMutation.mutate(selectedReservation.id)}
-              type="button"
-            >
-              {selectedReservation.reservationStatus.code === "APPROVED"
-                ? "Approved"
-                : approveMutation.isPending
-                  ? "Approving..."
-                  : "Approve Reservation"}
-            </button>
+                <section className="crm-activity-list">
+                  <h4>Remarks</h4>
+                  <p className="crm-muted-text">{selectedReservation.remarks ?? "No remarks recorded."}</p>
+                </section>
+              </div>
+            ) : (
+              <p className="crm-muted-text crm-opportunity-detail-body">Reservation details could not be loaded.</p>
+            )}
+          </section>
+        </div>
+      ) : null}
 
-            <section className="crm-activity-list">
-              <h4>Remarks</h4>
-              <p className="crm-muted-text">{selectedReservation.remarks ?? "No remarks recorded."}</p>
-            </section>
-          </>
-        ) : (
-          <p className="crm-muted-text">Select a reservation to review status, unit, expiry, and cancellation action.</p>
-        )}
-      </section>
+      <FormNoticeDialog
+        confirmLabel="OK"
+        message={noticeDialog.message}
+        onClose={closeNotice}
+        open={noticeDialog.open}
+        title={noticeDialog.title}
+        variant={noticeDialog.variant}
+      />
+
+      <UnitPickerDialog
+        onClose={() => setUnitPickerOpen(false)}
+        onSelect={(unit) => {
+          reservationForm.setValue("unitId", unit.id);
+          reservationForm.setValue("unitCode", unit.unitCode);
+        }}
+        open={unitPickerOpen}
+        projectCode={selectedOpportunity?.projectCode}
+      />
     </div>
   );
 }
