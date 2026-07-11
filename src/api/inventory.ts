@@ -30,6 +30,13 @@ export type CreateProjectPayload = {
   remarks?: string;
 };
 
+export type UnitVelocityTag = {
+  code: string;
+  name: string;
+  kind: "sold" | "unsold" | "unknown";
+  days: number | null;
+};
+
 export type Unit = {
   id: string;
   project: {
@@ -64,6 +71,7 @@ export type Unit = {
   isActive: boolean;
   remarks: string | null;
   catalogue?: UnitCatalogue;
+  salesVelocityTag?: UnitVelocityTag;
 };
 
 export type CreateUnitPayload = {

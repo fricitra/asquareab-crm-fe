@@ -17,7 +17,10 @@ export type NavIconName =
   | "currencies"
   | "reference-data"
   | "activity"
-  | "chevron";
+  | "chevron"
+  | "targets"
+  | "calendar"
+  | "ai";
 
 const iconPaths: Record<NavIconName, ReactNode> = {
   dashboard: (
@@ -118,7 +121,32 @@ const iconPaths: Record<NavIconName, ReactNode> = {
       <circle cx="19" cy="12" r="2" />
     </>
   ),
-  chevron: <path d="M8 10l4 4 4-4" />
+  chevron: <path d="M8 10l4 4 4-4" />,
+  targets: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2" />
+      <path d="M12 20v2" />
+      <path d="M2 12h2" />
+      <path d="M20 12h2" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="4" y="5" width="16" height="15" rx="2" />
+      <path d="M8 3v4" />
+      <path d="M16 3v4" />
+      <path d="M4 10h16" />
+    </>
+  ),
+  ai: (
+    <>
+      <path d="M12 3l1.2 4.2L17 8.5l-3.8 1.3L12 14l-1.2-4.2L7 8.5l3.8-1.3L12 3z" />
+      <path d="M5 16l.8 2.8L8.5 19l-2.7.9L5 22.5l-.8-2.6L1.5 19l2.7-.9L5 16z" />
+      <path d="M19 15l.7 2.3L22 18l-2.3.8L19 21l-.7-2.2L16 18l2.3-.8L19 15z" />
+    </>
+  )
 };
 
 export function NavIcon({ name }: NavIconProps) {

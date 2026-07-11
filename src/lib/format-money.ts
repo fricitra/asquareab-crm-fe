@@ -48,12 +48,24 @@ export function formatAmount(
   const compactAbove = options?.compactAbove ?? 100_000;
   const abs = Math.abs(amount);
 
+  if (abs >= 1_000_000_000) {
+    const billions = amount / 1_000_000_000;
+    return (
+      billions.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }) + "B"
+    );
+  }
+
   if (abs >= compactAbove) {
     const millions = amount / 1_000_000;
-    return millions.toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2
-    }) + "M";
+    return (
+      millions.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      }) + "M"
+    );
   }
 
   return amount.toLocaleString(undefined, {

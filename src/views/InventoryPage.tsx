@@ -26,6 +26,7 @@ import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
+import { UnitVelocityBadge } from "../shared/UnitVelocityBadge";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 
 type InventoryTab = "projects" | "units" | "availability";
@@ -815,6 +816,12 @@ export function InventoryPage() {
           <div><dt>Area</dt><dd>{area(selectedUnit.netArea)} net / {area(selectedUnit.grossArea)} gross</dd></div>
           <div><dt>Price</dt><dd>{formatInBase(selectedUnit.basePrice, selectedUnit.currencyCode)}</dd></div>
           <div><dt>Status</dt><dd>{linkName(selectedUnit.availabilityStatus)}</dd></div>
+          {selectedUnit.salesVelocityTag ? (
+            <div className="crm-field-span-all">
+              <dt>Sales Velocity</dt>
+              <dd><UnitVelocityBadge tag={selectedUnit.salesVelocityTag} /></dd>
+            </div>
+          ) : null}
         </dl>
       );
     }
@@ -899,6 +906,12 @@ export function InventoryPage() {
         <dl className="crm-detail-list crm-unit-view-grid">
           <div><dt>Launch Date</dt><dd>{sales?.launchDate ?? "-"}</dd></div>
           <div><dt>Sales Release Date</dt><dd>{sales?.salesReleaseDate ?? "-"}</dd></div>
+          {selectedUnit.salesVelocityTag ? (
+            <div className="crm-field-span-all">
+              <dt>Sales Velocity Tag</dt>
+              <dd><UnitVelocityBadge tag={selectedUnit.salesVelocityTag} /></dd>
+            </div>
+          ) : null}
           <div><dt>Base Selling Price</dt><dd>{formatInBase(sales?.baseSellingPrice ?? null, selectedUnit.currencyCode)}</dd></div>
           <div><dt>Premium Amount</dt><dd>{formatInBase(sales?.premiumAmount ?? null, selectedUnit.currencyCode)}</dd></div>
           <div><dt>Discount Ceiling %</dt><dd>{sales?.discountCeilingPct ?? "-"}</dd></div>
@@ -1063,7 +1076,12 @@ export function InventoryPage() {
             <div className="crm-panel-header">
               <div>
                 <h3>{selectedUnit ? selectedUnit.unitCode : "Create Unit"}</h3>
-                <p className="crm-muted-text">{selectedUnit ? `${selectedUnit.project.projectCode ?? "-"} · ${selectedUnit.unitName ?? "Unit"}` : "Create the unit first, then complete catalogue sections."}</p>
+                <p className="crm-muted-text">
+                  {selectedUnit
+                    ? `${selectedUnit.project.projectCode ?? "-"} · ${selectedUnit.unitName ?? "Unit"}`
+                    : "Create the unit first, then complete catalogue sections."}
+                </p>
+                {selectedUnit?.salesVelocityTag ? <UnitVelocityBadge tag={selectedUnit.salesVelocityTag} /> : null}
               </div>
               <div className="crm-dashboard-actions">
                 <button className="crm-secondary-button crm-fit-button" onClick={resetUnitForm} type="button">New</button>

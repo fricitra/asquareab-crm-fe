@@ -9,7 +9,7 @@ export function RecentActivityPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const activityQuery = useQuery({
     queryKey: ["dashboard", "summary"],
-    queryFn: getDashboardSummary,
+    queryFn: () => getDashboardSummary(),
     enabled: Boolean(accessToken),
     staleTime: 15_000,
     retry: 1
