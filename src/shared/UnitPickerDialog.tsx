@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { listUnits, type Unit } from "../api/inventory";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
 
 type UnitPickerDialogProps = {
@@ -13,6 +14,8 @@ type UnitPickerDialogProps = {
 export function UnitPickerDialog({ open, onClose, onSelect, projectCode }: UnitPickerDialogProps) {
   const [search, setSearch] = useState("");
   const [matchProjectOnly, setMatchProjectOnly] = useState(Boolean(projectCode));
+
+  useModalEscape(open, onClose);
 
   const unitsQuery = useQuery({
     queryKey: ["inventory", "units", "picker"],

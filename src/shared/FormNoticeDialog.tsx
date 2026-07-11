@@ -1,3 +1,5 @@
+import { useModalEscape } from "../hooks/useModalEscape";
+
 type FormNoticeDialogProps = {
   open: boolean;
   title: string;
@@ -15,6 +17,8 @@ export function FormNoticeDialog({
   confirmLabel = "OK",
   onClose
 }: FormNoticeDialogProps) {
+  useModalEscape(open, onClose);
+
   if (!open) {
     return null;
   }
@@ -31,9 +35,21 @@ export function FormNoticeDialog({
           <h3 id="crm-notice-title">{title}</h3>
         </div>
         <div className="crm-notice-body">
-          {message.split("\n").map((line, index) =>
-            line.trim() === "" ? <br key={`gap-${index}`} /> : <p key={`${line}-${index}`}>{line}</p>
-          )}
+          {message.split("\n").map((line, index) => {
+            if (line.trim() === "") {
+              return <br key={`gap-${index}`} />;
+            }
+
+            if (line.trimStart().startsWith("•")) {
+              return (
+                <p className="crm-notice-bullet" key={`${line}-${index}`}>
+                  {line.trimStart()}
+                </p>
+              );
+            }
+
+            return <p key={`${line}-${index}`}>{line}</p>;
+          })}
         </div>
         <div className="crm-notice-actions">
           <button className="crm-primary-button crm-fit-button" onClick={onClose} type="button">

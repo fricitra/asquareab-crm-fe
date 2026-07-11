@@ -17,6 +17,7 @@ import {
   type ExchangeRatePayload
 } from "../api/currencies";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
 
@@ -220,6 +221,9 @@ export function CurrencyMasterPage() {
   const [rateModalOpen, setRateModalOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  useModalEscape(currencyModalOpen, () => setCurrencyModalOpen(false));
+  useModalEscape(rateModalOpen, () => setRateModalOpen(false));
+
   const currencyForm = useForm<CurrencyFormValues>({ defaultValues: blankCurrencyForm });
   const policyForm = useForm<PolicyFormValues>({
     defaultValues: {
@@ -289,12 +293,14 @@ export function CurrencyMasterPage() {
   const rateTotal = ratesQuery.data?.pagination.total ?? 0;
 
   const stats = useMemo(() => {
-    const active = rows.filter((currency) => currency.status === "ACTIVE" && currency.isActive).length;
-    const payment = rows.filter((currency) => currency.isPaymentCurrencyAllowed).length;
-    const dropdown = rows.filter((currency) => currency.isCrmDropdownAllowed).length;
-    const contract = rows.filter((currency) => currency.isContractCurrencyAllowed).map((currency) => currency.currencyCode).join(", ") || "-";
-    return { total: currencyTotal, active, payment, dropdown, contract };
-  }, [rows, currencyTotal]);
+    const summary = currenciesQuery.data?.summary;
+    return {
+      total: currencyTotal,
+      active: summary?.active ?? 0,
+      payment: summary?.payment ?? 0,
+      contract: summary?.contract ?? "-"
+    };
+  }, [currenciesQuery.data?.summary, currencyTotal]);
 
   useEffect(() => {
     if (selectedCurrency) {

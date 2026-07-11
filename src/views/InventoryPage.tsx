@@ -21,6 +21,7 @@ import {
 } from "../api/inventory";
 import { listCurrencies } from "../api/currencies";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
@@ -322,7 +323,7 @@ function CheckField({ label, name, register }: { label: string; name: string; re
 
 export function InventoryPage() {
   const queryClient = useQueryClient();
-  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
+  const { formatInBase, defaultContractCurrency } = useMoneyFormatter();
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [activeTab, setActiveTab] = useState<InventoryTab>("projects");
   const [unitDetailTab, setUnitDetailTab] = useState<UnitDetailTab>("identification");
@@ -331,6 +332,7 @@ export function InventoryPage() {
   const [projectPage, setProjectPage] = useState(1);
   const [unitPage, setUnitPage] = useState(1);
   const [unitModalOpen, setUnitModalOpen] = useState(false);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -603,8 +605,9 @@ export function InventoryPage() {
 
   const createProjectMutation = useMutation({
     mutationFn: (values: ProjectFormValues) => createProject(projectPayload(values)),
-    onSuccess: (project) => {
-      setSelectedProjectId(project.id);
+    onSuccess: () => {
+      setProjectModalOpen(false);
+      setSelectedProjectId(null);
       projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: defaultContractCurrency, description: "", remarks: "" });
       refreshInventory("Project saved.");
     },
@@ -614,6 +617,7 @@ export function InventoryPage() {
     mutationFn: ({ id, values }: { id: string; values: ProjectFormValues }) => updateProject(id, projectPayload(values)),
     onSuccess: (project) => {
       setSelectedProjectId(project.id);
+      setProjectModalOpen(false);
       refreshInventory("Project updated.");
     },
     onError: () => setMessage("Project could not be updated.")
@@ -694,7 +698,7 @@ export function InventoryPage() {
       setMessage("Project code and name are required.");
       return;
     }
-    if (selectedProject && activeTab === "projects") updateProjectMutation.mutate({ id: selectedProject.id, values });
+    if (selectedProject) updateProjectMutation.mutate({ id: selectedProject.id, values });
     else createProjectMutation.mutate(values);
   });
 
@@ -722,11 +726,33 @@ export function InventoryPage() {
       name: project.name,
       locationCode: project.locationCode ?? "",
       legalEntityCode: project.legalEntityCode ?? "",
-      currencyCode: project.currencyCode ?? "USD",
+      currencyCode: project.currencyCode ?? defaultContractCurrency,
       description: project.description ?? "",
       remarks: project.remarks ?? ""
     });
+    setProjectModalOpen(true);
   };
+
+  const openNewProjectModal = () => {
+    setSelectedProjectId(null);
+    projectForm.reset({
+      projectCode: "",
+      name: "",
+      locationCode: "",
+      legalEntityCode: "",
+      currencyCode: defaultContractCurrency,
+      description: "",
+      remarks: ""
+    });
+    setProjectModalOpen(true);
+  };
+
+  const closeProjectModal = () => {
+    setProjectModalOpen(false);
+  };
+
+  useModalEscape(projectModalOpen, closeProjectModal);
+  useModalEscape(unitModalOpen, () => setUnitModalOpen(false));
 
   const loadUnitForm = (unit: Unit) => {
     setActiveTab("units");
@@ -931,62 +957,43 @@ export function InventoryPage() {
       </section>
 
       {activeTab === "projects" ? (
-        <section className="crm-action-grid crm-inventory-grid">
-          <section className="crm-panel">
-            <div className="crm-panel-header">
-              <h3>Project Register</h3>
+        <section className="crm-panel">
+          <div className="crm-panel-header">
+            <h3>Project Register</h3>
+            <div className="crm-unit-register-actions">
               <input className="crm-input crm-search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search project, location" value={search} />
+              <button className="crm-primary-button" onClick={openNewProjectModal} type="button">
+                New Project
+              </button>
             </div>
-            <div className="crm-table-wrap">
-              <table className="crm-table">
-                <thead><tr><th>Project</th><th>Location</th><th>Currency</th><th>Status</th></tr></thead>
-                <tbody>
-                  {projectRows.map((project) => (
-                    <tr className={selectedProjectId === project.id ? "is-selected" : ""} key={project.id} onClick={() => loadProjectForm(project)}>
-                      <td><strong>{project.projectCode}</strong><span>{project.name}</span></td>
-                      <td>{project.locationCode ?? "-"}</td>
-                      <td>{project.currencyCode ?? "-"}</td>
-                      <td>{project.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <ListPagination
-              page={projectPage}
-              pageSize={pageSize}
-              total={projectsQuery.data?.pagination.total ?? 0}
-              itemLabel="projects"
-              onPageChange={setProjectPage}
-            />
-          </section>
-
-          <form className="crm-panel crm-form" onSubmit={onProjectSubmit}>
-            <div className="crm-panel-header">
-              <h3>{selectedProject ? "Edit Project" : "Create Project"}</h3>
-              <button className="crm-secondary-button crm-fit-button" onClick={() => {
-                setSelectedProjectId(null);
-                projectForm.reset({ projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: defaultContractCurrency, description: "", remarks: "" });
-              }} type="button">New</button>
-            </div>
-            <label className="crm-field"><span className="crm-label">Project Code</span><input className="crm-input" {...projectForm.register("projectCode")} /></label>
-            <label className="crm-field"><span className="crm-label">Project Name</span><input className="crm-input" {...projectForm.register("name")} /></label>
-            <div className="crm-two-col">
-              <label className="crm-field"><span className="crm-label">Location</span><input className="crm-input" {...projectForm.register("locationCode")} /></label>
-              <label className="crm-field">
-                <span className="crm-label">Currency</span>
-                <select className="crm-input" {...projectForm.register("currencyCode")}>
-                  <option value="">Select currency</option>
-                  {currencyRows.map((item) => <option key={item.id} value={item.currencyCode}>{item.currencyCode} - {item.currencyName}</option>)}
-                </select>
-              </label>
-            </div>
-            <label className="crm-field"><span className="crm-label">Legal Entity</span><input className="crm-input" {...projectForm.register("legalEntityCode")} /></label>
-            <label className="crm-field"><span className="crm-label">Description</span><textarea className="crm-input crm-textarea" {...projectForm.register("description")} /></label>
-            <button className="crm-primary-button" disabled={createProjectMutation.isPending || updateProjectMutation.isPending} type="submit">
-              {selectedProject ? "Update Project" : "Create Project"}
-            </button>
-          </form>
+          </div>
+          <div className="crm-table-wrap">
+            <table className="crm-table">
+              <thead><tr><th>Project</th><th>Location</th><th>Currency</th><th>Status</th><th>Act.</th></tr></thead>
+              <tbody>
+                {projectRows.map((project) => (
+                  <tr key={project.id}>
+                    <td><strong>{project.projectCode}</strong><span>{project.name}</span></td>
+                    <td>{project.locationCode ?? "-"}</td>
+                    <td>{project.currencyCode ?? "-"}</td>
+                    <td>{project.status}</td>
+                    <td>
+                      <button className="crm-secondary-button crm-small-button" onClick={() => loadProjectForm(project)} type="button">
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ListPagination
+            page={projectPage}
+            pageSize={pageSize}
+            total={projectsQuery.data?.pagination.total ?? 0}
+            itemLabel="projects"
+            onPageChange={setProjectPage}
+          />
         </section>
       ) : null}
 
@@ -1265,6 +1272,77 @@ export function InventoryPage() {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {projectModalOpen ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-opportunity-detail-modal crm-project-modal" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>{selectedProject ? "Edit Project" : "Create Project"}</h3>
+                <p className="crm-muted-text">
+                  {selectedProject
+                    ? `${selectedProject.projectCode} · ${selectedProject.name}`
+                    : "Add a project before creating units in inventory."}
+                </p>
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={closeProjectModal} type="button">
+                Close
+              </button>
+            </div>
+            <form className="crm-opportunity-detail-body crm-form" onSubmit={onProjectSubmit}>
+              <label className="crm-field">
+                <span className="crm-label">Project Code</span>
+                <input className="crm-input" {...projectForm.register("projectCode")} />
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Project Name</span>
+                <input className="crm-input" {...projectForm.register("name")} />
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Location</span>
+                <input className="crm-input" {...projectForm.register("locationCode")} />
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Currency</span>
+                <select className="crm-input crm-select-full" {...projectForm.register("currencyCode")}>
+                  <option value="">Select currency</option>
+                  {currencyRows.map((item) => (
+                    <option key={item.id} value={item.currencyCode}>
+                      {item.currencyCode} - {item.currencyName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Legal Entity</span>
+                <input className="crm-input" {...projectForm.register("legalEntityCode")} />
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Description</span>
+                <textarea className="crm-input crm-textarea" {...projectForm.register("description")} />
+              </label>
+              <label className="crm-field">
+                <span className="crm-label">Remarks</span>
+                <textarea className="crm-input crm-textarea" {...projectForm.register("remarks")} />
+              </label>
+              <div className="crm-modal-actions">
+                <button className="crm-secondary-button" onClick={closeProjectModal} type="button">
+                  Cancel
+                </button>
+                <button className="crm-primary-button" disabled={createProjectMutation.isPending || updateProjectMutation.isPending} type="submit">
+                  {selectedProject
+                    ? updateProjectMutation.isPending
+                      ? "Updating..."
+                      : "Update Project"
+                    : createProjectMutation.isPending
+                      ? "Creating..."
+                      : "Create Project"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
       ) : null}
     </div>
   );

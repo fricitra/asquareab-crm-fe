@@ -20,6 +20,7 @@ import {
 import { listReservations } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
@@ -222,7 +223,7 @@ export function ContractsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const processedHandoffRef = useRef<string | null>(null);
   const handoffNoteRef = useRef<string | null>(null);
-  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
+  const { formatInBase, defaultContractCurrency } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
@@ -458,20 +459,8 @@ export function ContractsPage() {
     setSearchParams(nextParams, { replace: true });
   }, [location.state, searchParams, setSearchParams]);
 
-  useEffect(() => {
-    if (!contractDetailModalOpen) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !createOpen) {
-        closeContractDetailModal();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [contractDetailModalOpen, createOpen]);
+  useModalEscape(contractDetailModalOpen, closeContractDetailModal, { disabled: createOpen });
+  useModalEscape(createOpen, () => setCreateOpen(false));
 
   const selectedReservation = availableReservations.find(
     (reservation) => reservation.id === contractForm.watch("reservationId")

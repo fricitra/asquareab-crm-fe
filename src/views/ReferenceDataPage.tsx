@@ -10,6 +10,7 @@ import {
   type ReferenceDataPayload
 } from "../api/reference-data";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { ListPagination } from "../shared/ListPagination";
 
 type ReferenceModalMode = "value" | "category" | "group" | "edit" | null;
@@ -153,6 +154,13 @@ export function ReferenceDataPage() {
     void queryClient.invalidateQueries({ queryKey: ["reference-data"] });
     void queryClient.invalidateQueries({ queryKey: ["reference"] });
   };
+
+  const closeReferenceModal = () => {
+    setModalMode(null);
+    setEditingItem(null);
+  };
+
+  useModalEscape(Boolean(modalMode), closeReferenceModal);
 
   const createMutation = useMutation({
     mutationFn: (values: ReferenceFormValues) => createReferenceData(payload(values)),

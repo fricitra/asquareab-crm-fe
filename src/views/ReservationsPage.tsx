@@ -1,4 +1,3 @@
-import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
@@ -15,6 +14,8 @@ import {
 } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { getApiErrorMessage } from "../lib/format-api-error";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
@@ -55,15 +56,6 @@ function defaultReservationExpiryDate() {
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + 30);
   return expiry.toISOString().slice(0, 10);
-}
-
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    const message = (error.response?.data as { message?: string } | undefined)?.message;
-    return message && message.trim() !== "" ? message : fallback;
-  }
-
-  return fallback;
 }
 
 function reservationWorkflowSteps(
@@ -126,7 +118,7 @@ export function ReservationsPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const processedHandoffRef = useRef<string | null>(null);
-  const { formatInBase, defaultContractCurrency, toBase } = useMoneyFormatter();
+  const { formatInBase, defaultContractCurrency } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
@@ -322,39 +314,9 @@ export function ReservationsPage() {
     setSelectedReservationId(null);
   };
 
-  useEffect(() => {
-    if (!reservationDetailModalOpen) {
-      return;
-    }
+  useModalEscape(reservationDetailModalOpen, closeReservationDetailModal, { disabled: noticeDialog.open });
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !noticeDialog.open) {
-        event.preventDefault();
-        closeReservationDetailModal();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [noticeDialog.open, reservationDetailModalOpen]);
-
-  useEffect(() => {
-    if (!createOpen) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !noticeDialog.open && !unitPickerOpen) {
-        event.preventDefault();
-        setCreateOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createOpen, noticeDialog.open, unitPickerOpen]);
+  useModalEscape(createOpen, () => setCreateOpen(false), { disabled: noticeDialog.open || unitPickerOpen });
 
   const onReservationSubmit = reservationForm.handleSubmit((values) => {
     if (!values.opportunityId) {
@@ -609,48 +571,58 @@ export function ReservationsPage() {
                   </div>
                 </dl>
 
-                <div className="crm-opportunity-action-card-footer">
-                  <button
-                    className="crm-secondary-button crm-opportunity-action-button"
-                    disabled={!selectedReservation.isActive || cancelMutation.isPending}
-                    onClick={() => cancelMutation.mutate(selectedReservation.id)}
-                    type="button"
-                  >
-                    {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
-                  </button>
-                  {selectedReservation.reservationStatus.code === "APPROVED" &&
-                  selectedReservation.opportunity.id ? (
-                    <button
-                      className="crm-primary-button crm-opportunity-action-button"
-                      onClick={() =>
-                        navigate(`/proposals?createFor=${selectedReservation.opportunity.id}`, {
-                          state: { fromReservation: selectedReservation.reservationNo }
-                        })
-                      }
-                      type="button"
-                    >
-                      Create Proposal
-                    </button>
-                  ) : (
-                    <button
-                      className="crm-primary-button crm-opportunity-action-button"
-                      disabled={
-                        !selectedReservation.isActive ||
-                        selectedReservation.reservationStatus.code === "APPROVED" ||
-                        selectedReservation.reservationStatus.code === "CANCELLED" ||
-                        approveMutation.isPending
-                      }
-                      onClick={() => approveMutation.mutate(selectedReservation.id)}
-                      type="button"
-                    >
-                      {selectedReservation.reservationStatus.code === "APPROVED"
-                        ? "Approved"
-                        : approveMutation.isPending
-                          ? "Approving..."
-                          : "Approve Reservation"}
-                    </button>
-                  )}
-                </div>
+                <section className="crm-opportunity-actions">
+                  <section className="crm-opportunity-action-card crm-opportunity-action-card-wide">
+                    <div className="crm-opportunity-action-card-header">
+                      <h4>Reservation Actions</h4>
+                      <p className="crm-muted-text">
+                        Approve to continue toward proposal, cancel to release the unit, or create a proposal once approved.
+                      </p>
+                    </div>
+                    <div className="crm-opportunity-action-card-footer">
+                      <button
+                        className="crm-secondary-button crm-opportunity-action-button"
+                        disabled={!selectedReservation.isActive || cancelMutation.isPending}
+                        onClick={() => cancelMutation.mutate(selectedReservation.id)}
+                        type="button"
+                      >
+                        {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
+                      </button>
+                      {selectedReservation.reservationStatus.code === "APPROVED" &&
+                      selectedReservation.opportunity.id ? (
+                        <button
+                          className="crm-primary-button crm-opportunity-action-button"
+                          onClick={() =>
+                            navigate(`/proposals?createFor=${selectedReservation.opportunity.id}`, {
+                              state: { fromReservation: selectedReservation.reservationNo }
+                            })
+                          }
+                          type="button"
+                        >
+                          Create Proposal
+                        </button>
+                      ) : (
+                        <button
+                          className="crm-primary-button crm-opportunity-action-button"
+                          disabled={
+                            !selectedReservation.isActive ||
+                            selectedReservation.reservationStatus.code === "APPROVED" ||
+                            selectedReservation.reservationStatus.code === "CANCELLED" ||
+                            approveMutation.isPending
+                          }
+                          onClick={() => approveMutation.mutate(selectedReservation.id)}
+                          type="button"
+                        >
+                          {selectedReservation.reservationStatus.code === "APPROVED"
+                            ? "Approved"
+                            : approveMutation.isPending
+                              ? "Approving..."
+                              : "Approve Reservation"}
+                        </button>
+                      )}
+                    </div>
+                  </section>
+                </section>
 
                 <section className="crm-activity-list">
                   <h4>Remarks</h4>

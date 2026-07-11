@@ -1,4 +1,4 @@
-import axios from "axios";
+import { getApiErrorMessage as resolveApiErrorMessage } from "../lib/format-api-error";
 import { apiClient } from "../lib/api-client";
 
 export type LoginPayload = {
@@ -62,25 +62,6 @@ export async function loginWithOtp(payload: OtpLoginPayload) {
   return response.data;
 }
 
-export function getApiErrorMessage(error: unknown) {
-  if (!axios.isAxiosError(error)) {
-    return "Unexpected error while contacting the CRM backend.";
-  }
-
-  if (!error.response) {
-    return "CRM backend is not reachable. Please check whether the backend is running.";
-  }
-
-  if (error.response.status === 401) {
-    return (error.response.data as { message?: string } | undefined)?.message ?? "Invalid username or password.";
-  }
-
-  if (error.response.status === 403) {
-    return (error.response.data as { message?: string } | undefined)?.message ?? "You do not have permission for this action.";
-  }
-
-  return (
-    (error.response.data as { message?: string } | undefined)?.message ??
-    `Request failed with status ${error.response.status}.`
-  );
+export function getApiErrorMessage(error: unknown, fallback?: string) {
+  return resolveApiErrorMessage(error, fallback);
 }

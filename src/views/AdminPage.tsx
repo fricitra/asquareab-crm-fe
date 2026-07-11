@@ -23,6 +23,7 @@ import {
   type RolePermission
 } from "../api/admin";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { ListPagination } from "../shared/ListPagination";
 
 type AdminTab = "users" | "roles";
@@ -159,6 +160,9 @@ export function AdminPage() {
   const [roleModalOpen, setRoleModalOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  useModalEscape(userModalOpen, () => setUserModalOpen(false));
+  useModalEscape(roleModalOpen, () => setRoleModalOpen(false));
+
   const userForm = useForm<UserFormValues>({ defaultValues: blankUserForm });
   const roleForm = useForm<RoleFormValues>({ defaultValues: blankRoleForm });
 
@@ -211,18 +215,15 @@ export function AdminPage() {
   const selectedUser = selectedUserQuery.data ?? userRows.find((user) => user.id === selectedUserId) ?? null;
   const selectedRole = selectedRolePermissionsQuery.data?.role ?? roleRows.find((role) => role.id === selectedRoleId) ?? null;
 
-  const stats = useMemo(() => {
-    const activeUsers = userRows.filter((user) => user.status === "ACTIVE" && user.isActive).length;
-    const loginDisabled = userRows.filter((user) => !user.loginEnabled).length;
-    const activeRoles = roleRows.filter((role) => role.status === "ACTIVE" && role.isActive).length;
-    return {
-      users: usersQuery.data?.pagination.total ?? userRows.length,
-      activeUsers,
-      roles: rolesQuery.data?.pagination.total ?? roleRows.length,
-      activeRoles,
-      loginDisabled
-    };
-  }, [roleRows, rolesQuery.data?.pagination.total, userRows, usersQuery.data?.pagination.total]);
+  const stats = useMemo(
+    () => ({
+      users: usersQuery.data?.pagination.total ?? 0,
+      activeUsers: usersQuery.data?.summary?.activeUsers ?? 0,
+      roles: rolesQuery.data?.pagination.total ?? 0,
+      loginDisabled: usersQuery.data?.summary?.loginDisabled ?? 0
+    }),
+    [rolesQuery.data?.pagination.total, usersQuery.data]
+  );
 
   useEffect(() => {
     if (selectedUser) {

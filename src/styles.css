@@ -1444,8 +1444,28 @@ textarea {
   width: auto;
 }
 
+.crm-project-modal {
+  width: min(720px, calc(100vw - 96px));
+}
+
+.crm-project-modal .crm-field select.crm-input,
+.crm-select-full {
+  width: 100%;
+  min-width: 0;
+}
+
+.crm-notice-bullet {
+  margin-left: 8px;
+}
+
 .crm-lead-detail-modal {
   width: min(1200px, calc(100vw - 96px));
+}
+
+.crm-lead-detail-modal .crm-opportunity-action-card-fields.crm-compact-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .crm-lead-detail-modal .crm-detail-list {

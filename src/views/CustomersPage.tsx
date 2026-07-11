@@ -16,6 +16,7 @@ import {
 import { getReferenceFamily } from "../api/reference-data";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { ListPagination } from "../shared/ListPagination";
 
 type CustomerTab = "customers" | "brokers";
@@ -145,6 +146,9 @@ export function CustomersPage() {
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [brokerModalOpen, setBrokerModalOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useModalEscape(customerModalOpen, () => setCustomerModalOpen(false));
+  useModalEscape(brokerModalOpen, () => setBrokerModalOpen(false));
 
   const customerForm = useForm<CustomerFormValues>({ defaultValues: blankCustomer });
   const brokerForm = useForm<BrokerFormValues>({ defaultValues: blankBroker });

@@ -27,9 +27,9 @@ export function RecentActivityPage() {
     return (
       <section className="crm-panel">
         <h3>Recent activity unavailable</h3>
-        <p className="crm-muted-text">
+        <div className="crm-error-banner">
           {activityQuery.error ? getApiErrorMessage(activityQuery.error) : "Activity feed could not be loaded."}
-        </p>
+        </div>
         <button className="crm-secondary-button" type="button" onClick={() => activityQuery.refetch()}>
           Retry
         </button>

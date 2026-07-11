@@ -106,6 +106,7 @@ export async function listAdminUsers(params?: ListQueryParams) {
   const response = await apiClient.get<{
     items: AdminUser[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { activeUsers: number; loginDisabled: number };
   }>("/admin/users", {
     params: buildListQueryParams(params)
   });

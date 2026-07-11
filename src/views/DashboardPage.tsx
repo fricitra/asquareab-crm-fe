@@ -3,8 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { getApiErrorMessage } from "../api/auth";
 import { getDashboardSummary, type DashboardBreakdown } from "../api/dashboard";
-import { useCurrencyContext } from "../hooks/useCurrencyContext";
+import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { formatAmount } from "../lib/format-money";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { useAuthStore } from "../store/auth-store";
 
 function percent(value: number) {
@@ -13,10 +14,12 @@ function percent(value: number) {
 
 function StatusBars({
   items,
-  valueMode = false
+  valueMode = false,
+  formatValue = formatAmount
 }: {
   items: DashboardBreakdown[];
   valueMode?: boolean;
+  formatValue?: (value: number) => string;
 }) {
   const max = Math.max(...items.map((item) => (valueMode ? item.value : item.count)), 1);
 
@@ -32,7 +35,7 @@ function StatusBars({
           <div className="crm-dashboard-bar" key={`${item.code}-${item.name}`}>
             <div className="crm-dashboard-bar-label">
               <strong>{item.name ?? item.code ?? "-"}</strong>
-              <span>{valueMode ? formatAmount(current) : current.toLocaleString()}</span>
+              <span>{valueMode ? formatValue(current) : current.toLocaleString()}</span>
             </div>
             <div className="crm-dashboard-bar-track">
               <span style={{ width: `${Math.max((current / max) * 100, current > 0 ? 8 : 0)}%` }} />
@@ -46,7 +49,7 @@ function StatusBars({
 
 export function DashboardPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
-  const currencyQuery = useCurrencyContext();
+  const { formatInBase } = useMoneyFormatter();
   const dashboardQuery = useQuery({
     queryKey: ["dashboard", "summary"],
     queryFn: getDashboardSummary,
@@ -77,11 +80,11 @@ export function DashboardPage() {
     return (
       <section className="crm-panel">
         <h3>Dashboard unavailable</h3>
-        <p className="crm-muted-text">
+        <div className="crm-error-banner">
           {dashboardQuery.error
             ? getApiErrorMessage(dashboardQuery.error)
             : "The dashboard summary could not be loaded."}
-        </p>
+        </div>
         <button
           className="crm-secondary-button"
           type="button"
@@ -94,8 +97,7 @@ export function DashboardPage() {
   }
 
   const metrics = summary.metrics;
-  const displayCurrency = summary.displayCurrency ?? currencyQuery.data?.baseCurrencyCode ?? "KES";
-  const currencySymbol = currencyQuery.data?.symbols?.[displayCurrency]?.symbol ?? displayCurrency;
+  const formatMetric = (value: number) => formatInBase(value);
 
   return (
     <div className="crm-workspace crm-dashboard-workspace">
@@ -104,16 +106,7 @@ export function DashboardPage() {
           <p className="crm-eyebrow">Executive Dashboard</p>
           <div className="crm-dashboard-title-row">
             <h2>Sales Operations Overview</h2>
-            <div
-              className="crm-dashboard-currency-badge"
-              title={`All monetary values are shown in ${displayCurrency}`}
-            >
-              <span aria-hidden className="crm-currency-badge-icon">
-                {currencySymbol}
-              </span>
-              <span className="crm-currency-badge-label">Base currency</span>
-              <strong className="crm-currency-badge-code">{displayCurrency}</strong>
-            </div>
+            <CurrencyBadge />
           </div>
         </div>
         <div className="crm-dashboard-actions">
@@ -127,7 +120,7 @@ export function DashboardPage() {
       <section className="crm-grid crm-metric-grid">
         <article className="crm-card crm-dashboard-kpi">
           <h3>Pipeline Value</h3>
-          <div className="crm-kpi">{formatAmount(metrics.pipelineValue)}</div>
+          <div className="crm-kpi">{formatMetric(metrics.pipelineValue)}</div>
           <p>{metrics.openOpportunities} open opportunities · {percent(metrics.avgProbability)} average probability</p>
         </article>
         <article className="crm-card crm-dashboard-kpi">
@@ -142,7 +135,7 @@ export function DashboardPage() {
         </article>
         <article className="crm-card crm-dashboard-kpi">
           <h3>Contract Value</h3>
-          <div className="crm-kpi">{formatAmount(metrics.contractValue)}</div>
+          <div className="crm-kpi">{formatMetric(metrics.contractValue)}</div>
           <p>{metrics.signedContracts} signed · {metrics.erpHandedOff} ERP handed off</p>
         </article>
       </section>
@@ -160,7 +153,7 @@ export function DashboardPage() {
         </article>
         <article className="crm-card crm-dashboard-kpi">
           <h3>Discount Exposure</h3>
-          <div className="crm-kpi">{formatAmount(metrics.discountExposure)}</div>
+          <div className="crm-kpi">{formatMetric(metrics.discountExposure)}</div>
           <p>Total discount amount across active proposals</p>
         </article>
         <article className="crm-card crm-dashboard-kpi">
@@ -176,7 +169,7 @@ export function DashboardPage() {
             <h3>Pipeline by Stage</h3>
             <Link to="/opportunities">Open</Link>
           </div>
-          <StatusBars items={summary.breakdowns.opportunityStages} valueMode />
+          <StatusBars formatValue={formatMetric} items={summary.breakdowns.opportunityStages} valueMode />
         </section>
 
         <section className="crm-panel">
@@ -192,7 +185,7 @@ export function DashboardPage() {
             <h3>Reservation Health</h3>
             <Link to="/reservations">Open</Link>
           </div>
-          <StatusBars items={summary.breakdowns.reservationStatuses} valueMode />
+          <StatusBars formatValue={formatMetric} items={summary.breakdowns.reservationStatuses} valueMode />
         </section>
 
         <section className="crm-panel">
@@ -200,7 +193,7 @@ export function DashboardPage() {
             <h3>Contract Status</h3>
             <Link to="/contracts">Open</Link>
           </div>
-          <StatusBars items={summary.breakdowns.contractStatuses} valueMode />
+          <StatusBars formatValue={formatMetric} items={summary.breakdowns.contractStatuses} valueMode />
         </section>
       </section>
 

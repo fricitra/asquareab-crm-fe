@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
 import { useForm, Controller, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import {
@@ -22,6 +21,8 @@ import {
 import { convertLeadToOpportunity } from "../api/opportunities";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 import { DEFAULT_LIST_PAGE_SIZE, getRowSerialNumber } from "../lib/list-pagination";
+import { getApiErrorMessage } from "../lib/format-api-error";
+import { useModalEscape } from "../hooks/useModalEscape";
 import {
   buildLeadValidationMessage,
   getFirstInvalidLeadField,
@@ -134,15 +135,6 @@ function pickString(value: string) {
   return value.trim() === "" ? undefined : value.trim();
 }
 
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    const message = (error.response?.data as { message?: string } | undefined)?.message;
-    return message && message.trim() !== "" ? message : fallback;
-  }
-
-  return fallback;
-}
-
 function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
   return {
     firstName: pickString(values.firstName),
@@ -222,39 +214,6 @@ function toQualifyPayload(values: QualifyFormValues): QualifyLeadPayload {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
-
-
-function leadNextAction(lead: Lead) {
-  if (!lead.assignedAt && !lead.assignedToUser.id) {
-    return {
-      title: "Assign lead",
-      summary: "Assign this lead to yourself before qualification so ownership and audit history are clear.",
-      dataNeeded: "No extra data required."
-    };
-  }
-
-  if (!lead.qualifiedAt) {
-    return {
-      title: "Qualify lead",
-      summary: "Capture buyer type, funding, budget, timeline, score, and qualification notes.",
-      dataNeeded: "Rating, buyer type, funding, timeline, budget, score, and notes."
-    };
-  }
-
-  if (!lead.convertedAt) {
-    return {
-      title: "Convert to opportunity",
-      summary: "Create the opportunity once the buyer details are qualified.",
-      dataNeeded: "No extra data required. Conversion creates the opportunity record."
-    };
-  }
-
-  return {
-    title: "Continue in Opportunities",
-    summary: "Lead work is complete. Continue the customer journey in the Opportunity module.",
-    dataNeeded: "Stage, probability, notes, and site visits."
-  };
 }
 
 function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, currency?: string | null) => string): WorkflowStep[] {
@@ -577,7 +536,6 @@ export function LeadsPage() {
   const [leadCreateModalOpen, setLeadCreateModalOpen] = useState(false);
   const [leadDetailModalOpen, setLeadDetailModalOpen] = useState(false);
   const [assignTargetUserId, setAssignTargetUserId] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
     title: "",
@@ -782,7 +740,6 @@ export function LeadsPage() {
   const createMutation = useMutation({
     mutationFn: createLead,
     onSuccess: (lead) => {
-      setErrorMessage(null);
       setSelectedLeadId(lead.id);
       createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
       setLeadCreateModalOpen(false);
@@ -793,7 +750,6 @@ export function LeadsPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be created. Check required fields and reference values.");
-      setErrorMessage(message);
       showNotice("Lead Not Created", message, "error");
     }
   });
@@ -801,7 +757,6 @@ export function LeadsPage() {
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: CreateLeadPayload }) => updateLead(id, payload),
     onSuccess: (lead) => {
-      setErrorMessage(null);
       setSelectedLeadId(lead.id);
       setEditingLeadId(null);
       createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
@@ -814,7 +769,6 @@ export function LeadsPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be updated.");
-      setErrorMessage(message);
       showNotice("Lead Not Updated", message, "error");
     }
   });
@@ -822,7 +776,6 @@ export function LeadsPage() {
   const qualifyMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: QualifyLeadPayload }) => qualifyLead(id, payload),
     onSuccess: (lead) => {
-      setErrorMessage(null);
       setSelectedLeadId(lead.id);
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
@@ -830,7 +783,6 @@ export function LeadsPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be qualified. Complete the qualification checklist and try again.");
-      setErrorMessage(message);
       showNotice("Qualification Failed", message, "error");
     }
   });
@@ -840,7 +792,6 @@ export function LeadsPage() {
       return assignLead(leadId, assignedToUserId, "Assigned from lead detail");
     },
     onSuccess: (lead) => {
-      setErrorMessage(null);
       setSelectedLeadId(lead.id);
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
@@ -853,7 +804,6 @@ export function LeadsPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be assigned. Please check assignee eligibility and try again.");
-      setErrorMessage(message);
       showNotice("Assignment Failed", message, "error");
     }
   });
@@ -865,7 +815,6 @@ export function LeadsPage() {
         remarks: "Converted from Lead module"
       }),
     onSuccess: (opportunity) => {
-      setErrorMessage(null);
       void queryClient.invalidateQueries({ queryKey: ["lead", selectedLeadId] });
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
@@ -877,13 +826,11 @@ export function LeadsPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be converted. Qualify the lead before conversion.");
-      setErrorMessage(message);
       showNotice("Conversion Failed", message, "error");
     }
   });
 
   const selectedLead = leadDetailQuery.data;
-  const selectedLeadNextAction = selectedLead ? leadNextAction(selectedLead) : null;
 
   useEffect(() => {
     if (!selectedLead) {
@@ -921,22 +868,17 @@ export function LeadsPage() {
     setLeadCreateModalOpen(true);
   };
 
+  useModalEscape(leadCreateModalOpen, closeLeadCreateModal, { disabled: noticeDialog.open });
+
   useEffect(() => {
     if (!leadCreateModalOpen) {
       return;
     }
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeLeadCreateModal();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
     window.setTimeout(() => firstNameInputRef.current?.focus(), 0);
-    return () => window.removeEventListener("keydown", onKeyDown);
   }, [leadCreateModalOpen]);
+
+  useModalEscape(leadDetailModalOpen, closeLeadDetailModal, { disabled: noticeDialog.open });
 
   useEffect(() => {
     if (!selectedLeadSourceRefId) {
@@ -1056,13 +998,11 @@ export function LeadsPage() {
       if (invalidField) {
         pendingFocusFieldRef.current = invalidField;
       }
-      setErrorMessage(message);
       showNotice("Required Fields Missing", message, "error");
       return;
     }
 
     setIsValidatingLead(true);
-    setErrorMessage(null);
 
     try {
       const duplicate = await checkLeadDuplicate({
@@ -1078,7 +1018,6 @@ export function LeadsPage() {
           "A lead already exists with the same First Name, Last Name, Mobile, and Email.\n" +
           "All four values must match (names and email ignore case; mobile ignores spaces and symbols).\n" +
           `Existing lead: ${duplicate.lead.leadNo}`;
-        setErrorMessage(message);
         showNotice("Duplicate Lead Detected", message, "error");
         return;
       }
@@ -1092,7 +1031,6 @@ export function LeadsPage() {
       createMutation.mutate(payload);
     } catch (error) {
       const message = getApiErrorMessage(error, "Could not validate lead details. Please try again.");
-      setErrorMessage(message);
       showNotice("Validation Failed", message, "error");
     } finally {
       setIsValidatingLead(false);
@@ -1100,7 +1038,7 @@ export function LeadsPage() {
   });
   const onQualify = qualifyForm.handleSubmit((values) => {
     if (!selectedLeadId || !selectedLead?.assignedToUser.id) {
-      setErrorMessage("Assign the lead before completing qualification.");
+      showNotice("Assignment Required", "Assign the lead before completing qualification.", "error");
       return;
     }
 
@@ -1150,8 +1088,6 @@ export function LeadsPage() {
           <div className="crm-kpi">{stats.averageScore}</div>
         </article>
       </section>
-
-      {errorMessage ? <div className="crm-error-banner">{errorMessage}</div> : null}
 
       <section className="crm-panel">
         <div className="crm-panel-header">
@@ -1436,7 +1372,7 @@ export function LeadsPage() {
 
       {leadDetailModalOpen ? (
         <div className="crm-modal-backdrop" role="presentation">
-          <section aria-modal="true" className="crm-modal crm-management-modal crm-lead-detail-modal" role="dialog">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-opportunity-detail-modal crm-lead-detail-modal" role="dialog">
             <div className="crm-panel-header">
               <div>
                 <h3>Lead Detail</h3>
@@ -1454,7 +1390,7 @@ export function LeadsPage() {
             {leadDetailQuery.isLoading ? (
               <p className="crm-muted-text">Loading lead details...</p>
             ) : selectedLead ? (
-              <>
+              <div className="crm-opportunity-detail-body">
                 <div className="crm-detail-title">
                   <div>
                     <strong>{[selectedLead.firstName, selectedLead.lastName].filter(Boolean).join(" ") || selectedLead.contactName || selectedLead.leadNo}</strong>
@@ -1474,9 +1410,7 @@ export function LeadsPage() {
                   </div>
                   <div>
                     <dt>Budget</dt>
-                    <dd>
-                      {formatLeadBudget(selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}
-                    </dd>
+                    <dd>{formatLeadBudget(selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}</dd>
                   </div>
                   <div>
                     <dt>Timeline</dt>
@@ -1492,164 +1426,188 @@ export function LeadsPage() {
                   </div>
                 </dl>
 
-                {selectedLeadNextAction ? (
-                  <section className="crm-next-action">
-                    <div>
-                      <span className="crm-label">Next Action</span>
-                      <strong>{selectedLeadNextAction.title}</strong>
-                      <p>{selectedLeadNextAction.summary}</p>
+                <section className="crm-opportunity-actions">
+                  <section className="crm-opportunity-action-card">
+                    <div className="crm-opportunity-action-card-header">
+                      <h4>Assign Lead</h4>
+                      <p className="crm-muted-text">
+                        Assign this lead to a user before qualification so ownership and audit history are clear.
+                      </p>
                     </div>
-                    <div>
-                      <span className="crm-label">Data Needed</span>
-                      <p>{selectedLeadNextAction.dataNeeded}</p>
-                    </div>
-                  </section>
-                ) : null}
-
-                <div className="crm-lead-detail-actions">
-                  <label className="crm-field crm-lead-action-field">
-                    <span className="crm-label">Assign To User</span>
-                    <select className="crm-input crm-lead-action-control" onChange={(event) => setAssignTargetUserId(event.target.value)} value={assignTargetUserId}>
-                      <option value="">Select user</option>
-                      {(assignableUsersQuery.data ?? []).map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    className="crm-primary-button crm-lead-action-button"
-                    disabled={assignMutation.isPending || !assignTargetUserId || assignTargetUserId === selectedLead.assignedToUser.id}
-                    onClick={() => assignMutation.mutate({ leadId: selectedLead.id, assignedToUserId: assignTargetUserId })}
-                    type="button"
-                  >
-                    {assignMutation.isPending ? "Assigning..." : "Assign Lead"}
-                  </button>
-                  <button
-                    className={`${selectedLead.qualifiedAt && !selectedLead.convertedAt ? "crm-primary-button" : "crm-secondary-button"} crm-lead-action-button`}
-                    disabled={convertMutation.isPending || !selectedLead.qualifiedAt || Boolean(selectedLead.convertedAt)}
-                    onClick={() => convertMutation.mutate(selectedLead.id)}
-                    type="button"
-                  >
-                    {selectedLead.convertedAt ? "Converted" : convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
-                  </button>
-                </div>
-                {!selectedLead.qualifiedAt ? (
-                  <p className="crm-action-note">Convert is available after this lead is qualified.</p>
-                ) : null}
-
-                {selectedLead.convertedAt ? (
-                  <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
-                    Continue in Opportunities
-                  </button>
-                ) : null}
-
-                {selectedLead.qualifiedAt ? (
-                  <section className="crm-activity-list">
-                    <h4>Qualification Completed</h4>
-                    <p className="crm-muted-text">
-                      Qualified by {selectedLead.qualifiedByUser.name ?? "CRM user"} on {formatDate(selectedLead.qualifiedAt)}.
-                    </p>
-                  </section>
-                ) : (
-                  <form className="crm-form crm-compact-form" onSubmit={onQualify}>
-                    {!selectedLead.assignedToUser.id ? (
-                      <p className="crm-action-note">Assign the lead first, then qualification can be completed.</p>
-                    ) : null}
-                    <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Nationality" name="nationalityRefId" options={nationalitiesQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Country" name="countryRefId" options={countriesQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField
-                      label="Current Residence"
-                      name="currentResidenceCountryRefId"
-                      options={countriesQuery.data ?? []}
-                      register={qualifyForm.register}
-                    />
-                    <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Purpose of Purchase" name="purposeOfPurchaseRefId" options={purposeOfPurchaseQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField
-                      label="Decision Maker Status"
-                      name="decisionMakerStatusRefId"
-                      options={decisionMakerStatusQuery.data ?? []}
-                      register={qualifyForm.register}
-                    />
-                    <SelectField
-                      label="Affordability Assessment"
-                      name="affordabilityStatusRefId"
-                      options={affordabilityStatusQuery.data ?? []}
-                      register={qualifyForm.register}
-                    />
-                    <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Bedrooms" name="preferredBedroomRefId" options={bedroomQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Preferred View" name="preferredViewRefId" options={viewTypeQuery.data ?? []} register={qualifyForm.register} />
-                    <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={qualifyForm.register} />
-                    <label className="crm-field">
-                      <span className="crm-label">Last Interaction</span>
-                      <Controller
-                        control={qualifyForm.control}
-                        name="lastInteractionAt"
-                        render={({ field }) => (
-                          <DateTimeField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
-                        )}
-                      />
-                    </label>
-                    <SelectField
-                      label="Interaction Type"
-                      name="lastInteractionTypeRefId"
-                      options={interactionTypeQuery.data ?? []}
-                      register={qualifyForm.register}
-                    />
-                    <SelectField
-                      label="Interaction Outcome"
-                      name="interactionOutcomeRefId"
-                      options={interactionOutcomeQuery.data ?? []}
-                      register={qualifyForm.register}
-                    />
-                    <label className="crm-field">
-                      <span className="crm-label">Interaction Count</span>
-                      <input className="crm-input" inputMode="numeric" {...qualifyForm.register("interactionCount")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Date of Birth</span>
-                      <Controller
-                        control={qualifyForm.control}
-                        name="dateOfBirth"
-                        render={({ field }) => (
-                          <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
-                        )}
-                      />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">City</span>
-                      <input className="crm-input" {...qualifyForm.register("city")} />
-                    </label>
-                    <div className="crm-two-col">
+                    <div className="crm-opportunity-action-card-fields">
                       <label className="crm-field">
-                        <span className="crm-label">Budget</span>
-                        <input className="crm-input" {...qualifyForm.register("budgetMax")} />
-                      </label>
-                      <label className="crm-field">
-                        <span className="crm-label">Acquisition Cost</span>
-                        <input className="crm-input" {...qualifyForm.register("acquisitionCost")} />
+                        <span className="crm-label">Assign To User</span>
+                        <select className="crm-input" onChange={(event) => setAssignTargetUserId(event.target.value)} value={assignTargetUserId}>
+                          <option value="">Select user</option>
+                          {(assignableUsersQuery.data ?? []).map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {option.name}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                     </div>
-                    <label className="crm-field">
-                      <span className="crm-label">Score</span>
-                      <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
-                    </label>
-                    <label className="crm-field">
-                      <span className="crm-label">Notes</span>
-                      <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
-                    </label>
-                    <button className="crm-primary-button" disabled={qualifyMutation.isPending || !selectedLead.assignedToUser.id} type="submit">
-                      {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
-                    </button>
-                  </form>
-                )}
-              </>
+                    <div className="crm-opportunity-action-card-footer">
+                      <button
+                        className="crm-primary-button crm-opportunity-action-button"
+                        disabled={assignMutation.isPending || !assignTargetUserId || assignTargetUserId === selectedLead.assignedToUser.id}
+                        onClick={() => assignMutation.mutate({ leadId: selectedLead.id, assignedToUserId: assignTargetUserId })}
+                        type="button"
+                      >
+                        {assignMutation.isPending ? "Assigning..." : "Assign Lead"}
+                      </button>
+                    </div>
+                  </section>
+
+                  {!selectedLead.qualifiedAt ? (
+                    <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onQualify}>
+                      <div className="crm-opportunity-action-card-header">
+                        <h4>Qualify Lead</h4>
+                        <p className="crm-muted-text">
+                          Capture buyer type, funding, budget, timeline, score, and qualification notes.
+                        </p>
+                      </div>
+                      <div className="crm-opportunity-action-card-fields crm-compact-form">
+                        {!selectedLead.assignedToUser.id ? (
+                          <p className="crm-action-note">Assign the lead first, then qualification can be completed.</p>
+                        ) : null}
+                        <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Nationality" name="nationalityRefId" options={nationalitiesQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Country" name="countryRefId" options={countriesQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField
+                          label="Current Residence"
+                          name="currentResidenceCountryRefId"
+                          options={countriesQuery.data ?? []}
+                          register={qualifyForm.register}
+                        />
+                        <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Funding" name="fundingSourceRefId" options={fundingSourcesQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Purpose of Purchase" name="purposeOfPurchaseRefId" options={purposeOfPurchaseQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField
+                          label="Decision Maker Status"
+                          name="decisionMakerStatusRefId"
+                          options={decisionMakerStatusQuery.data ?? []}
+                          register={qualifyForm.register}
+                        />
+                        <SelectField
+                          label="Affordability Assessment"
+                          name="affordabilityStatusRefId"
+                          options={affordabilityStatusQuery.data ?? []}
+                          register={qualifyForm.register}
+                        />
+                        <SelectField label="Timeline" name="purchaseTimelineRefId" options={timelinesQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Bedrooms" name="preferredBedroomRefId" options={bedroomQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Preferred View" name="preferredViewRefId" options={viewTypeQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Income Range" name="incomeRangeRefId" options={incomeRangeQuery.data ?? []} register={qualifyForm.register} />
+                        <label className="crm-field">
+                          <span className="crm-label">Last Interaction</span>
+                          <Controller
+                            control={qualifyForm.control}
+                            name="lastInteractionAt"
+                            render={({ field }) => (
+                              <DateTimeField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                            )}
+                          />
+                        </label>
+                        <SelectField
+                          label="Interaction Type"
+                          name="lastInteractionTypeRefId"
+                          options={interactionTypeQuery.data ?? []}
+                          register={qualifyForm.register}
+                        />
+                        <SelectField
+                          label="Interaction Outcome"
+                          name="interactionOutcomeRefId"
+                          options={interactionOutcomeQuery.data ?? []}
+                          register={qualifyForm.register}
+                        />
+                        <label className="crm-field">
+                          <span className="crm-label">Interaction Count</span>
+                          <input className="crm-input" inputMode="numeric" {...qualifyForm.register("interactionCount")} />
+                        </label>
+                        <label className="crm-field">
+                          <span className="crm-label">Date of Birth</span>
+                          <Controller
+                            control={qualifyForm.control}
+                            name="dateOfBirth"
+                            render={({ field }) => (
+                              <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
+                            )}
+                          />
+                        </label>
+                        <label className="crm-field">
+                          <span className="crm-label">City</span>
+                          <input className="crm-input" {...qualifyForm.register("city")} />
+                        </label>
+                        <div className="crm-two-col">
+                          <label className="crm-field">
+                            <span className="crm-label">Budget</span>
+                            <input className="crm-input" {...qualifyForm.register("budgetMax")} />
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Acquisition Cost</span>
+                            <input className="crm-input" {...qualifyForm.register("acquisitionCost")} />
+                          </label>
+                        </div>
+                        <label className="crm-field">
+                          <span className="crm-label">Score</span>
+                          <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
+                        </label>
+                        <label className="crm-field">
+                          <span className="crm-label">Notes</span>
+                          <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
+                        </label>
+                      </div>
+                      <div className="crm-opportunity-action-card-footer">
+                        <button className="crm-primary-button crm-opportunity-action-button" disabled={qualifyMutation.isPending || !selectedLead.assignedToUser.id} type="submit">
+                          {qualifyMutation.isPending ? "Qualifying..." : "Qualify Lead"}
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <section className="crm-opportunity-action-card">
+                      <div className="crm-opportunity-action-card-header">
+                        <h4>Qualification Completed</h4>
+                        <p className="crm-muted-text">
+                          Qualified by {selectedLead.qualifiedByUser.name ?? "CRM user"} on {formatDate(selectedLead.qualifiedAt)}.
+                        </p>
+                      </div>
+                    </section>
+                  )}
+
+                  {selectedLead.convertedAt ? (
+                    <section className="crm-opportunity-action-card">
+                      <div className="crm-opportunity-action-card-header">
+                        <h4>Continue in Opportunities</h4>
+                        <p className="crm-muted-text">Lead work is complete. Continue the customer journey in the Opportunity module.</p>
+                      </div>
+                      <div className="crm-opportunity-action-card-footer">
+                        <button className="crm-primary-button crm-opportunity-action-button" onClick={() => navigate("/opportunities")} type="button">
+                          Open Opportunities
+                        </button>
+                      </div>
+                    </section>
+                  ) : selectedLead.qualifiedAt ? (
+                    <section className="crm-opportunity-action-card">
+                      <div className="crm-opportunity-action-card-header">
+                        <h4>Convert to Opportunity</h4>
+                        <p className="crm-muted-text">Create the opportunity once the buyer details are qualified.</p>
+                      </div>
+                      <div className="crm-opportunity-action-card-footer">
+                        <button
+                          className="crm-primary-button crm-opportunity-action-button"
+                          disabled={convertMutation.isPending}
+                          onClick={() => convertMutation.mutate(selectedLead.id)}
+                          type="button"
+                        >
+                          {convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
+                        </button>
+                      </div>
+                    </section>
+                  ) : null}
+                </section>
+              </div>
             ) : (
               <p className="crm-muted-text">Lead details could not be loaded.</p>
             )}

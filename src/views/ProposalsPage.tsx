@@ -21,6 +21,7 @@ import { listReservations } from "../api/reservations";
 import { useCurrencyContext, useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { formatMoney } from "../lib/format-money";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
@@ -791,20 +792,8 @@ export function ProposalsPage() {
     ratesToBase
   ]);
 
-  useEffect(() => {
-    if (!proposalDetailModalOpen) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !createOpen) {
-        closeProposalDetailModal();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createOpen, proposalDetailModalOpen]);
+  useModalEscape(proposalDetailModalOpen, closeProposalDetailModal, { disabled: createOpen });
+  useModalEscape(createOpen, () => setCreateOpen(false));
 
   const selectedProposalAuditLines = buildProposalAuditLines(selectedProposal?.pricingContextJson ?? null, baseCurrency);
 

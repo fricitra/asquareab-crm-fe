@@ -128,6 +128,7 @@ export async function listCurrencies(filters?: {
   const response = await apiClient.get<{
     items: Currency[];
     pagination: { limit: number; offset: number; total: number };
+    summary?: { active: number; payment: number; contract: string };
   }>("/currencies", { params: filters });
   return response.data;
 }

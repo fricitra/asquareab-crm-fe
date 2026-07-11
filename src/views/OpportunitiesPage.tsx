@@ -1,4 +1,3 @@
-import axios from "axios";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
@@ -18,6 +17,8 @@ import { listUnits } from "../api/inventory";
 import { createReservation, listReservations, type Reservation } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { getApiErrorMessage } from "../lib/format-api-error";
+import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { DateTimeField } from "../shared/DateTimeField";
@@ -88,15 +89,6 @@ function pickNumber(value: string) {
 
 function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
-
-function getApiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error)) {
-    const message = (error.response?.data as { message?: string } | undefined)?.message;
-    return message && message.trim() !== "" ? message : fallback;
-  }
-
-  return fallback;
 }
 
 const opportunityForwardStages = ["Open", "Qualified", "Site Visit", "Negotiation", "Reservation Ready", "Proposal"] as const;
@@ -253,7 +245,6 @@ export function OpportunitiesPage() {
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
   const [reservationModalOpen, setReservationModalOpen] = useState(false);
   const [reservationUnitPickerOpen, setReservationUnitPickerOpen] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
     title: "",
@@ -391,7 +382,6 @@ export function OpportunitiesPage() {
   const stageMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: ChangeOpportunityStagePayload }) => changeOpportunityStage(id, payload),
     onSuccess: (opportunity, variables) => {
-      setErrorMessage(null);
       void queryClient.invalidateQueries({ queryKey: ["opportunities"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunity", opportunity.id] });
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
@@ -412,7 +402,6 @@ export function OpportunitiesPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Opportunity stage could not be updated.");
-      setErrorMessage(message);
       showNotice("Stage Update Failed", message, "error");
     }
   });
@@ -420,7 +409,6 @@ export function OpportunitiesPage() {
   const noteMutation = useMutation({
     mutationFn: ({ id, noteText }: { id: string; noteText: string }) => addOpportunityNote(id, noteText, "SALES_NOTE"),
     onSuccess: (opportunity) => {
-      setErrorMessage(null);
       noteForm.reset();
       void queryClient.invalidateQueries({ queryKey: ["opportunity", opportunity.id] });
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
@@ -428,7 +416,6 @@ export function OpportunitiesPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Opportunity note could not be added.");
-      setErrorMessage(message);
       showNotice("Note Not Added", message, "error");
     }
   });
@@ -437,7 +424,6 @@ export function OpportunitiesPage() {
     mutationFn: ({ id, values }: { id: string; values: SiteVisitFormValues }) =>
       scheduleSiteVisit(id, new Date(values.visitDate).toISOString(), pickString(values.proposedUnitCode), pickString(values.remarks)),
     onSuccess: (opportunity) => {
-      setErrorMessage(null);
       siteVisitForm.reset();
       void queryClient.invalidateQueries({ queryKey: ["opportunity", opportunity.id] });
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
@@ -445,7 +431,6 @@ export function OpportunitiesPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Site visit could not be scheduled.");
-      setErrorMessage(message);
       showNotice("Site Visit Failed", message, "error");
     }
   });
@@ -461,7 +446,6 @@ export function OpportunitiesPage() {
         remarks: pickString(values.remarks)
       }),
     onSuccess: (reservation) => {
-      setErrorMessage(null);
       setReservationModalOpen(false);
       reservationForm.reset();
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
@@ -477,7 +461,6 @@ export function OpportunitiesPage() {
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Reservation could not be created.");
-      setErrorMessage(message);
       showNotice("Reservation Failed", message, "error");
     }
   });
@@ -534,22 +517,13 @@ export function OpportunitiesPage() {
     });
   };
 
-  useEffect(() => {
-    if (!opportunityDetailModalOpen) {
-      return;
-    }
+  useModalEscape(opportunityDetailModalOpen, closeOpportunityDetailModal, {
+    disabled: noticeDialog.open || reservationModalOpen || unitPickerOpen || reservationUnitPickerOpen
+  });
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !noticeDialog.open) {
-        event.preventDefault();
-        closeOpportunityDetailModal();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [noticeDialog.open, opportunityDetailModalOpen]);
+  useModalEscape(reservationModalOpen, () => setReservationModalOpen(false), {
+    disabled: noticeDialog.open || reservationUnitPickerOpen
+  });
 
   const onStageSubmit = stageForm.handleSubmit((values) => {
     if (!selectedOpportunityId || !values.opportunityStageRefId) return;
@@ -573,7 +547,6 @@ export function OpportunitiesPage() {
 
     if (!values.visitDate) {
       const message = "Select a visit date and time before scheduling.";
-      setErrorMessage(message);
       showNotice("Visit Date Required", message, "error");
       return;
     }
@@ -586,7 +559,6 @@ export function OpportunitiesPage() {
 
     if (!values.lostReasonRefId) {
       const message = "Lost reason is required when marking an opportunity as lost.";
-      setErrorMessage(message);
       showNotice("Lost Reason Required", message, "error");
       return;
     }
@@ -642,7 +614,6 @@ export function OpportunitiesPage() {
   const onReservationSubmit = reservationForm.handleSubmit((values) => {
     if (!values.unitId) {
       const message = "Select an available unit before creating the reservation.";
-      setErrorMessage(message);
       showNotice("Unit Required", message, "error");
       return;
     }
@@ -680,8 +651,6 @@ export function OpportunitiesPage() {
           <div className="crm-kpi">{stats.avgProbability}%</div>
         </article>
       </section>
-
-      {errorMessage ? <div className="crm-error-banner">{errorMessage}</div> : null}
 
       <section className="crm-panel">
         <div className="crm-panel-header">
