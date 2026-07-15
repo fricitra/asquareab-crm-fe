@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { formatDisplayDate, nowDateInputValue, toDateInputValue } from "../lib/date-field-utils";
+import { CalendarMonthView, monthKeyFromValue } from "./CalendarMonthView";
 
 type DateFieldProps = {
   value?: string;
@@ -31,11 +32,14 @@ export const DateField = forwardRef<HTMLInputElement, DateFieldProps>(function D
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => toDateInputValue(value));
+  const [visibleMonth, setVisibleMonth] = useState(() => monthKeyFromValue(value));
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
 
   useEffect(() => {
     if (!open) {
-      setDraft(toDateInputValue(value));
+      const next = toDateInputValue(value);
+      setDraft(next);
+      setVisibleMonth(monthKeyFromValue(next || value));
     }
   }, [open, value]);
 
@@ -50,11 +54,23 @@ export const DateField = forwardRef<HTMLInputElement, DateFieldProps>(function D
         return;
       }
 
+      const width = 320;
+      let left = rect.left;
+      if (left + width > window.innerWidth - 12) {
+        left = Math.max(12, window.innerWidth - width - 12);
+      }
+
+      let top = rect.bottom + 6;
+      const estimatedHeight = 390;
+      if (top + estimatedHeight > window.innerHeight - 12) {
+        top = Math.max(12, rect.top - estimatedHeight - 6);
+      }
+
       setPopoverStyle({
         position: "fixed",
-        top: rect.bottom + 6,
-        left: rect.left,
-        width: Math.max(rect.width, 280),
+        top,
+        left,
+        width,
         zIndex: 1200
       });
     };
@@ -82,6 +98,7 @@ export const DateField = forwardRef<HTMLInputElement, DateFieldProps>(function D
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setOpen(false);
+        triggerRef.current?.focus();
       }
     };
 
@@ -103,7 +120,6 @@ export const DateField = forwardRef<HTMLInputElement, DateFieldProps>(function D
     if (!draft) {
       return;
     }
-
     applyValue(draft);
   };
 
@@ -112,7 +128,9 @@ export const DateField = forwardRef<HTMLInputElement, DateFieldProps>(function D
   };
 
   const handleToday = () => {
-    setDraft(nowDateInputValue());
+    const today = nowDateInputValue();
+    setDraft(today);
+    setVisibleMonth(monthKeyFromValue(today));
   };
 
   const displayValue = formatDisplayDate(value);
@@ -142,29 +160,25 @@ export const DateField = forwardRef<HTMLInputElement, DateFieldProps>(function D
       {open ? (
         <div className="crm-date-field-popover" role="dialog" aria-label="Choose date" style={popoverStyle}>
           <div className="crm-date-field-popover-body">
-            <label className="crm-field">
-              <span className="crm-label">Date</span>
-              <input
-                className="crm-input"
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    handleSet();
-                  }
-                }}
-                type="date"
-                value={draft}
-              />
-            </label>
+            <CalendarMonthView
+              onSelect={(next) => {
+                setDraft(next);
+                setVisibleMonth(monthKeyFromValue(next));
+              }}
+              onVisibleMonthChange={setVisibleMonth}
+              value={draft}
+              visibleMonth={visibleMonth}
+            />
           </div>
           <div className="crm-date-field-actions">
-            <button className="crm-inline-text-button" onClick={handleClear} type="button">
-              Clear
-            </button>
-            <button className="crm-inline-text-button" onClick={handleToday} type="button">
-              Today
-            </button>
+            <div className="crm-date-field-actions-start">
+              <button className="crm-inline-text-button" onClick={handleClear} type="button">
+                Clear
+              </button>
+              <button className="crm-inline-text-button" onClick={handleToday} type="button">
+                Today
+              </button>
+            </div>
             <button className="crm-primary-button crm-date-field-set-button" disabled={!draft} onClick={handleSet} type="button">
               Set
             </button>

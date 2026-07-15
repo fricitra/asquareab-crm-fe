@@ -44,6 +44,11 @@ export type Unit = {
     projectCode: string | null;
     name: string | null;
   };
+  product: {
+    id: string;
+    code: string | null;
+    name: string | null;
+  } | null;
   erpUnitId: string | null;
   unitCode: string;
   unitName: string | null;
@@ -74,8 +79,40 @@ export type Unit = {
   salesVelocityTag?: UnitVelocityTag;
 };
 
+export type UnitProduct = {
+  id: string;
+  productCode: string;
+  productName: string;
+  bedroomCount: number | null;
+  targetBuyer: string | null;
+  typicalFloorLocation: string | null;
+  typicalView: string | null;
+  typicalBuyerProfile: string | null;
+  targetRateBand: string | null;
+  parkingBaysMin: number | null;
+  parkingBaysMax: number | null;
+  overallSizeSource: string;
+  powderRoomDefinition: string;
+  marketPositioning: NamedLink;
+  ownershipType: NamedLink;
+  saleInventoryCategory: NamedLink;
+  rentalPoolEligibility: NamedLink;
+  investorRentalAppeal: NamedLink;
+  resalePotential: NamedLink;
+  inventoryPriority: NamedLink;
+  parkingPricingMode: NamedLink;
+  unitType: NamedLink & { code?: string | null };
+  defaultsJson: Record<string, unknown>;
+  displayPolicyJson: Record<string, unknown>;
+  status: string;
+  isActive: boolean;
+  remarks: string | null;
+};
+
 export type CreateUnitPayload = {
   projectId: string;
+  productId?: string;
+  applyProductDefaults?: boolean;
   unitCode: string;
   unitName?: string;
   blockCode?: string;
@@ -142,6 +179,7 @@ export type UnitAreaSchedule = {
   maidArea: number | null;
   storageArea: number | null;
   privatePoolArea: number | null;
+  privatePoolDeckArea: number | null;
   outdoorLoungeArea: number | null;
   carpetArea: number | null;
   commonArea: number | null;
@@ -161,6 +199,9 @@ export type UnitLocationAttributes = {
   endUnit: boolean;
   premiumStack: boolean;
   penthouseLevel: boolean;
+  oceanOrientedDesign: boolean;
+  crossVentilation: boolean;
+  naturalDaylighting: boolean;
   remarks: string | null;
 };
 
@@ -226,6 +267,9 @@ export type UpsertUnitLocationAttributesPayload = {
   endUnit?: boolean;
   premiumStack?: boolean;
   penthouseLevel?: boolean;
+  oceanOrientedDesign?: boolean;
+  crossVentilation?: boolean;
+  naturalDaylighting?: boolean;
   remarks?: string;
 };
 export type UpsertUnitParkingStoragePayload = {
@@ -348,5 +392,66 @@ export async function upsertUnitSpecification(id: string, payload: UpsertUnitSpe
 
 export async function upsertUnitSalesInformation(id: string, payload: UpsertUnitSalesInformationPayload) {
   const response = await apiClient.put<Unit>(`/inventory/units/${id}/sales-information`, payload);
+  return response.data;
+}
+
+export async function listUnitProducts(params?: ListQueryParams) {
+  const response = await apiClient.get<{
+    items: UnitProduct[];
+    pagination: { limit: number; offset: number; total: number };
+  }>("/inventory/products", {
+    params: buildListQueryParams(params)
+  });
+  return response.data;
+}
+
+export async function getUnitProduct(id: string) {
+  const response = await apiClient.get<UnitProduct>(`/inventory/products/${id}`);
+  return response.data;
+}
+
+export async function applyUnitProduct(unitId: string, productId: string) {
+  const response = await apiClient.post<Unit>(`/inventory/units/${unitId}/apply-product`, { productId });
+  return response.data;
+}
+
+export type CreateUnitProductPayload = {
+  productCode: string;
+  productName: string;
+  projectId?: string;
+  unitTypeRefId?: string;
+  unitSubTypeRefId?: string;
+  bedroomCount?: number;
+  marketPositioningRefId?: string;
+  ownershipTypeRefId?: string;
+  targetBuyer?: string;
+  typicalFloorLocation?: string;
+  typicalView?: string;
+  saleInventoryCategoryRefId?: string;
+  rentalPoolEligibilityRefId?: string;
+  typicalBuyerProfile?: string;
+  investorRentalAppealRefId?: string;
+  resalePotentialRefId?: string;
+  inventoryPriorityRefId?: string;
+  targetRatePerSqm?: number;
+  targetRateCurrency?: string;
+  targetRateBand?: string;
+  parkingBaysMin?: number;
+  parkingBaysMax?: number;
+  parkingPricingModeRefId?: string;
+  overallSizeSource?: "SALEABLE_AREA";
+  powderRoomDefinition?: "HALF_BATH";
+  defaultsJson?: Record<string, unknown>;
+  displayPolicyJson?: Record<string, unknown>;
+  remarks?: string;
+};
+
+export async function createUnitProduct(payload: CreateUnitProductPayload) {
+  const response = await apiClient.post<UnitProduct>("/inventory/products", payload);
+  return response.data;
+}
+
+export async function updateUnitProduct(id: string, payload: Partial<CreateUnitProductPayload>) {
+  const response = await apiClient.patch<UnitProduct>(`/inventory/products/${id}`, payload);
   return response.data;
 }

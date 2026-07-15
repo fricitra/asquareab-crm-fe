@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormRegister } from "react-hook-form";
 import {
+  applyUnitProduct,
   createProject,
   createUnit,
   getProject,
   getUnit,
   listProjects,
+  listUnitProducts,
   listUnits,
   updateProject,
   updateUnit,
+  updateUnitProduct,
   upsertUnitAreaSchedule,
   upsertUnitConfiguration,
   upsertUnitLocationAttributes,
@@ -17,7 +20,8 @@ import {
   upsertUnitSalesInformation,
   upsertUnitSpecification,
   type Project,
-  type Unit
+  type Unit,
+  type UnitProduct
 } from "../api/inventory";
 import { listCurrencies } from "../api/currencies";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
@@ -29,7 +33,7 @@ import { ListPagination } from "../shared/ListPagination";
 import { UnitVelocityBadge } from "../shared/UnitVelocityBadge";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 
-type InventoryTab = "projects" | "units" | "availability";
+type InventoryTab = "projects" | "units" | "products" | "availability";
 type UnitDetailTab = "identification" | "configuration" | "area" | "location" | "parking" | "specification" | "sales" | "linked";
 
 type ProjectFormValues = {
@@ -44,6 +48,8 @@ type ProjectFormValues = {
 
 type UnitFormValues = {
   projectId: string;
+  productId: string;
+  applyProductDefaults: boolean;
   unitCode: string;
   unitName: string;
   blockCode: string;
@@ -62,6 +68,18 @@ type UnitFormValues = {
   availabilityStatusRefId: string;
   remarks: string;
 };
+
+type ProductFormValues = {
+  productName: string;
+  targetBuyer: string;
+  typicalFloorLocation: string;
+  typicalView: string;
+  typicalBuyerProfile: string;
+  targetRateBand: string;
+  remarks: string;
+};
+
+type ProductModalMode = "view" | "edit";
 
 type ConfigurationFormValues = Record<
   | "livingRoomQty"
@@ -100,6 +118,7 @@ type AreaFormValues = Record<
   | "maidArea"
   | "storageArea"
   | "privatePoolArea"
+  | "privatePoolDeckArea"
   | "outdoorLoungeArea"
   | "carpetArea"
   | "commonArea"
@@ -119,6 +138,9 @@ type LocationFormValues = {
   endUnit: boolean;
   premiumStack: boolean;
   penthouseLevel: boolean;
+  oceanOrientedDesign: boolean;
+  crossVentilation: boolean;
+  naturalDaylighting: boolean;
   remarks: string;
 };
 
@@ -213,6 +235,7 @@ const areaFields: Array<{ name: keyof AreaFormValues; label: string }> = [
   { name: "maidArea", label: "Maid Area" },
   { name: "storageArea", label: "Storage Area" },
   { name: "privatePoolArea", label: "Private Pool Area" },
+  { name: "privatePoolDeckArea", label: "Private Pool Deck Area" },
   { name: "outdoorLoungeArea", label: "Outdoor Lounge Area" },
   { name: "carpetArea", label: "Carpet Area" },
   { name: "commonArea", label: "Common Area" },
@@ -240,6 +263,67 @@ function linkName(value: { name: string | null } | null | undefined) {
   return value?.name ?? "-";
 }
 
+function formatCatalogueValue(value: unknown) {
+  if (value == null || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+const specificationDefaultLabels: Array<{ key: string; label: string }> = [
+  { key: "smartHomeReady", label: "Smart Home Ready" },
+  { key: "highSpeedInternetReady", label: "High-Speed Internet Ready" },
+  { key: "energyEfficientFixtures", label: "Energy Efficient Fixtures" },
+  { key: "floorToCeilingGlass", label: "Floor-to-Ceiling Glass" },
+  { key: "privateLiftAccess", label: "Private Lift Access" },
+  { key: "privateLiftLobby", label: "Private Lift Lobby" },
+  { key: "privatePool", label: "Private Pool" },
+  { key: "privateJacuzzi", label: "Private Jacuzzi" },
+  { key: "bbqArea", label: "BBQ Area" },
+  { key: "entertainmentTerrace", label: "Entertainment Terrace" },
+  { key: "ceilingHeight", label: "Ceiling Height" }
+];
+
+const configurationNoteLabels: Array<{ key: string; label: string }> = [
+  { key: "walkInClosetNotes", label: "Walk-in Closet" },
+  { key: "ensuiteMasterNotes", label: "Ensuite (Master)" },
+  { key: "ensuiteBedroom2Notes", label: "Ensuite (Bedroom 2)" },
+  { key: "ensuiteBedroom3Notes", label: "Ensuite (Bedroom 3)" },
+  { key: "totalBathroomsNotes", label: "Total Bathrooms" },
+  { key: "remarks", label: "Configuration Notes" }
+];
+
+const locationDefaultLabels: Array<{ key: string; label: string }> = [
+  { key: "oceanOrientedDesign", label: "Ocean Oriented Design" },
+  { key: "crossVentilation", label: "Cross Ventilation" },
+  { key: "naturalDaylighting", label: "Natural Daylighting" },
+  { key: "penthouseLevel", label: "Penthouse Level" },
+  { key: "premiumStack", label: "Premium Stack" }
+];
+
+function blankProductForm(): ProductFormValues {
+  return {
+    productName: "",
+    targetBuyer: "",
+    typicalFloorLocation: "",
+    typicalView: "",
+    typicalBuyerProfile: "",
+    targetRateBand: "",
+    remarks: ""
+  };
+}
+
+function productFormFromProduct(product: UnitProduct): ProductFormValues {
+  return {
+    productName: product.productName ?? "",
+    targetBuyer: product.targetBuyer ?? "",
+    typicalFloorLocation: product.typicalFloorLocation ?? "",
+    typicalView: product.typicalView ?? "",
+    typicalBuyerProfile: product.typicalBuyerProfile ?? "",
+    targetRateBand: product.targetRateBand ?? "",
+    remarks: product.remarks ?? ""
+  };
+}
+
 function blankConfiguration(): ConfigurationFormValues {
   return Object.fromEntries(configurationFields.map((field) => [field.name, ""]).concat([["remarks", ""]])) as ConfigurationFormValues;
 }
@@ -263,6 +347,8 @@ function projectPayload(values: ProjectFormValues) {
 function unitPayload(values: UnitFormValues) {
   return {
     projectId: values.projectId,
+    productId: pickString(values.productId),
+    applyProductDefaults: values.applyProductDefaults,
     unitCode: values.unitCode.trim(),
     unitName: pickString(values.unitName),
     blockCode: pickString(values.blockCode),
@@ -332,18 +418,27 @@ export function InventoryPage() {
   const [search, setSearch] = useState("");
   const [projectPage, setProjectPage] = useState(1);
   const [unitPage, setUnitPage] = useState(1);
+  const [productPage, setProductPage] = useState(1);
   const [unitModalOpen, setUnitModalOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [productModalMode, setProductModalMode] = useState<ProductModalMode>("view");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const projectForm = useForm<ProjectFormValues>({
     defaultValues: { projectCode: "", name: "", locationCode: "", legalEntityCode: "", currencyCode: defaultContractCurrency, description: "", remarks: "" }
   });
+  const productForm = useForm<ProductFormValues>({
+    defaultValues: blankProductForm()
+  });
   const unitForm = useForm<UnitFormValues>({
     defaultValues: {
       projectId: "",
+      productId: "",
+      applyProductDefaults: true,
       unitCode: "",
       unitName: "",
       blockCode: "",
@@ -378,6 +473,9 @@ export function InventoryPage() {
       endUnit: false,
       premiumStack: false,
       penthouseLevel: false,
+      oceanOrientedDesign: false,
+      crossVentilation: false,
+      naturalDaylighting: false,
       remarks: ""
     }
   });
@@ -449,13 +547,33 @@ export function InventoryPage() {
       }),
     staleTime: 10_000
   });
+  const productsQuery = useQuery({
+    queryKey: ["inventory", "products", search, productPage],
+    queryFn: () =>
+      listUnitProducts({
+        search: search || undefined,
+        limit: pageSize,
+        offset: (productPage - 1) * pageSize
+      }),
+    staleTime: 10_000
+  });
+  const allProductsQuery = useQuery({
+    queryKey: ["inventory", "products", "all"],
+    queryFn: () => listUnitProducts({ limit: 100, offset: 0 }),
+    staleTime: 30_000
+  });
 
   useEffect(() => {
     setProjectPage(1);
     setUnitPage(1);
+    setProductPage(1);
   }, [search]);
   const selectedProjectQuery = useQuery({ queryKey: ["inventory", "project", selectedProjectId], queryFn: () => getProject(selectedProjectId ?? ""), enabled: Boolean(selectedProjectId) });
   const selectedUnitQuery = useQuery({ queryKey: ["inventory", "unit", selectedUnitId], queryFn: () => getUnit(selectedUnitId ?? ""), enabled: Boolean(selectedUnitId) });
+  const selectedProduct = useMemo(
+    () => (productsQuery.data?.items ?? []).find((item) => item.id === selectedProductId) ?? (allProductsQuery.data?.items ?? []).find((item) => item.id === selectedProductId) ?? null,
+    [allProductsQuery.data?.items, productsQuery.data?.items, selectedProductId]
+  );
   const unitTypesQuery = useQuery({ queryKey: ["reference", "inventory-unit-types"], queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE"), staleTime: 60_000 });
   const unitSubTypesQuery = useQuery({ queryKey: ["reference", "inventory-unit-sub-types"], queryFn: () => getReferenceFamily("INVENTORY", "UNIT_SUB_TYPE"), staleTime: 60_000 });
   const stacksQuery = useQuery({ queryKey: ["reference", "inventory-stacks"], queryFn: () => getReferenceFamily("INVENTORY", "STACK"), staleTime: 60_000 });
@@ -475,6 +593,8 @@ export function InventoryPage() {
 
   const projectRows = projectsQuery.data?.items ?? [];
   const unitRows = unitsQuery.data?.items ?? [];
+  const productRows = productsQuery.data?.items ?? [];
+  const productOptions = allProductsQuery.data?.items ?? [];
   const unitPagination = unitsQuery.data?.pagination ?? { limit: pageSize, offset: 0, total: 0 };
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProject = selectedProjectQuery.data;
@@ -486,11 +606,12 @@ export function InventoryPage() {
     return {
       projects: projectsQuery.data?.pagination.total ?? 0,
       units: unitsQuery.data?.pagination.total ?? 0,
+      products: productsQuery.data?.pagination.total ?? allProductsQuery.data?.pagination.total ?? 0,
       available: unitSummary?.available ?? 0,
       reserved: unitSummary?.reserved ?? 0,
       value: unitSummary?.value ?? 0
     };
-  }, [projectsQuery.data?.pagination.total, unitsQuery.data]);
+  }, [allProductsQuery.data?.pagination.total, productsQuery.data?.pagination.total, projectsQuery.data?.pagination.total, unitsQuery.data]);
 
   const refreshInventory = (successMessage: string) => {
     setMessage(successMessage);
@@ -501,6 +622,8 @@ export function InventoryPage() {
     if (!selectedUnit) return;
     unitForm.reset({
       projectId: selectedUnit.project.id,
+      productId: selectedUnit.product?.id ?? "",
+      applyProductDefaults: false,
       unitCode: selectedUnit.unitCode,
       unitName: selectedUnit.unitName ?? "",
       blockCode: selectedUnit.blockCode ?? "",
@@ -553,6 +676,9 @@ export function InventoryPage() {
       endUnit: location?.endUnit ?? false,
       premiumStack: location?.premiumStack ?? false,
       penthouseLevel: location?.penthouseLevel ?? false,
+      oceanOrientedDesign: location?.oceanOrientedDesign ?? false,
+      crossVentilation: location?.crossVentilation ?? false,
+      naturalDaylighting: location?.naturalDaylighting ?? false,
       remarks: location?.remarks ?? ""
     });
 
@@ -638,6 +764,33 @@ export function InventoryPage() {
       refreshInventory("Unit updated.");
     },
     onError: () => setMessage("Unit could not be updated.")
+  });
+  const applyProductMutation = useMutation({
+    mutationFn: ({ unitId, productId }: { unitId: string; productId: string }) => applyUnitProduct(unitId, productId),
+    onSuccess: (unit) => {
+      setSelectedUnitId(unit.id);
+      refreshInventory("Product defaults applied to unit.");
+    },
+    onError: () => setMessage("Product defaults could not be applied.")
+  });
+  const updateProductMutation = useMutation({
+    mutationFn: ({ id, values }: { id: string; values: ProductFormValues }) =>
+      updateUnitProduct(id, {
+        productName: values.productName.trim(),
+        targetBuyer: pickString(values.targetBuyer),
+        typicalFloorLocation: pickString(values.typicalFloorLocation),
+        typicalView: pickString(values.typicalView),
+        typicalBuyerProfile: pickString(values.typicalBuyerProfile),
+        targetRateBand: pickString(values.targetRateBand),
+        remarks: pickString(values.remarks)
+      }),
+    onSuccess: (product) => {
+      setSelectedProductId(product.id);
+      setProductModalMode("view");
+      productForm.reset(productFormFromProduct(product));
+      refreshInventory("Product updated.");
+    },
+    onError: () => setMessage("Product could not be updated.")
   });
 
   const sectionMutation = useMutation({
@@ -754,6 +907,31 @@ export function InventoryPage() {
 
   useModalEscape(projectModalOpen, closeProjectModal);
   useModalEscape(unitModalOpen, () => setUnitModalOpen(false));
+  useModalEscape(productModalOpen, () => {
+    setProductModalOpen(false);
+    setProductModalMode("view");
+  });
+
+  const openProductModal = (product: UnitProduct, mode: ProductModalMode) => {
+    setSelectedProductId(product.id);
+    setProductModalMode(mode);
+    productForm.reset(productFormFromProduct(product));
+    setProductModalOpen(true);
+  };
+
+  const closeProductModal = () => {
+    setProductModalOpen(false);
+    setProductModalMode("view");
+  };
+
+  const onProductSubmit = productForm.handleSubmit((values) => {
+    if (!selectedProduct) return;
+    if (!values.productName.trim()) {
+      setMessage("Product name is required.");
+      return;
+    }
+    updateProductMutation.mutate({ id: selectedProduct.id, values });
+  });
 
   const loadUnitForm = (unit: Unit) => {
     setActiveTab("units");
@@ -770,6 +948,8 @@ export function InventoryPage() {
     setUnitModalOpen(true);
     unitForm.reset({
       projectId: "",
+      productId: "",
+      applyProductDefaults: true,
       unitCode: "",
       unitName: "",
       blockCode: "",
@@ -805,6 +985,7 @@ export function InventoryPage() {
       return (
         <dl className="crm-detail-list crm-unit-view-grid">
           <div><dt>Project</dt><dd>{selectedUnit.project.projectCode} - {selectedUnit.project.name ?? "-"}</dd></div>
+          <div><dt>Product</dt><dd>{selectedUnit.product ? `${selectedUnit.product.code ?? "-"} · ${selectedUnit.product.name ?? "-"}` : "-"}</dd></div>
           <div><dt>Unit</dt><dd>{selectedUnit.unitCode}</dd></div>
           <div><dt>Unit Name</dt><dd>{selectedUnit.unitName ?? "-"}</dd></div>
           <div><dt>Inventory Code</dt><dd>{selectedUnit.inventoryCode ?? "-"}</dd></div>
@@ -863,6 +1044,9 @@ export function InventoryPage() {
           <div><dt>End Unit</dt><dd>{yesNo(location?.endUnit)}</dd></div>
           <div><dt>Premium Stack</dt><dd>{yesNo(location?.premiumStack)}</dd></div>
           <div><dt>Penthouse Level</dt><dd>{yesNo(location?.penthouseLevel)}</dd></div>
+          <div><dt>Ocean Oriented Design</dt><dd>{yesNo(location?.oceanOrientedDesign)}</dd></div>
+          <div><dt>Cross Ventilation</dt><dd>{yesNo(location?.crossVentilation)}</dd></div>
+          <div><dt>Natural Daylighting</dt><dd>{yesNo(location?.naturalDaylighting)}</dd></div>
           <div><dt>Remarks</dt><dd>{location?.remarks ?? "-"}</dd></div>
         </dl>
       );
@@ -950,6 +1134,7 @@ export function InventoryPage() {
 
       <section className="crm-grid crm-metric-grid">
         <article className="crm-card"><h3>Projects</h3><div className="crm-kpi">{stats.projects}</div></article>
+        <article className="crm-card"><h3>Products</h3><div className="crm-kpi">{stats.products}</div></article>
         <article className="crm-card"><h3>Units</h3><div className="crm-kpi">{stats.units}</div></article>
         <article className="crm-card"><h3>Available</h3><div className="crm-kpi">{stats.available}</div></article>
         <article className="crm-card"><h3>Value</h3><div className="crm-kpi">{formatInBase(stats.value)}</div></article>
@@ -960,6 +1145,7 @@ export function InventoryPage() {
       <section className="crm-tabs" aria-label="Inventory management tabs">
         {[
           { id: "projects", label: "Projects" },
+          { id: "products", label: "Products" },
           { id: "units", label: "Units" },
           { id: "availability", label: "Availability" }
         ].map((tab) => (
@@ -1010,6 +1196,83 @@ export function InventoryPage() {
         </section>
       ) : null}
 
+      {activeTab === "products" ? (
+        <section className="crm-unit-workspace">
+          <section className="crm-panel crm-unit-register-panel">
+            <div className="crm-panel-header">
+              <h3>Unit Product Catalogue</h3>
+              <div className="crm-unit-register-actions">
+                <input
+                  className="crm-input crm-search-input"
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setProductPage(1);
+                  }}
+                  placeholder="Search product code or name"
+                  value={search}
+                />
+              </div>
+            </div>
+            <div className="crm-table-wrap">
+              <table className="crm-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Type</th>
+                    <th>Beds</th>
+                    <th>Parking</th>
+                    <th>Positioning</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productRows.map((product) => (
+                    <tr className={selectedProductId === product.id && productModalOpen ? "is-selected" : ""} key={product.id}>
+                      <td>
+                        <strong>{product.productCode}</strong>
+                        <span>{product.productName}</span>
+                      </td>
+                      <td>{product.unitType.name ?? "-"}</td>
+                      <td>{product.bedroomCount ?? "-"}</td>
+                      <td>
+                        {product.parkingBaysMin ?? "-"}
+                        {product.parkingBaysMax != null && product.parkingBaysMax !== product.parkingBaysMin ? `-${product.parkingBaysMax}` : ""} bay
+                        {product.parkingPricingMode.name ? ` · ${product.parkingPricingMode.name}` : ""}
+                      </td>
+                      <td>{product.marketPositioning.name ?? "-"}</td>
+                      <td>
+                        <div className="crm-dashboard-actions">
+                          <button className="crm-secondary-button crm-small-button" onClick={() => openProductModal(product, "view")} type="button">
+                            View
+                          </button>
+                          <button className="crm-secondary-button crm-small-button" onClick={() => openProductModal(product, "edit")} type="button">
+                            Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {productRows.length === 0 ? (
+                    <tr>
+                      <td className="crm-empty-cell" colSpan={6}>
+                        No products found.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <ListPagination
+              page={productPage}
+              pageSize={pageSize}
+              total={productsQuery.data?.pagination.total ?? 0}
+              itemLabel="products"
+              onPageChange={setProductPage}
+            />
+          </section>
+        </section>
+      ) : null}
+
       {activeTab === "units" || activeTab === "availability" ? (
         <section className="crm-unit-workspace">
           <section className="crm-panel crm-unit-register-panel">
@@ -1034,12 +1297,13 @@ export function InventoryPage() {
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table crm-unit-register-table">
-                <thead><tr><th>Unit</th><th>Project</th><th>Type</th><th>Area</th><th>Price</th><th>Status</th><th>Action</th></tr></thead>
+                <thead><tr><th>Unit</th><th>Project</th><th>Product</th><th>Type</th><th>Area</th><th>Price</th><th>Status</th><th>Action</th></tr></thead>
                 <tbody>
                   {unitRows.map((unit) => (
                     <tr className={selectedUnitId === unit.id ? "is-selected" : ""} key={unit.id}>
                       <td><strong>{unit.unitCode}</strong><span>{unit.unitName ?? "Unit"}</span></td>
                       <td><strong>{unit.project.projectCode}</strong><span>{unit.project.name ?? "-"}</span></td>
+                      <td>{unit.product?.code ?? "-"}</td>
                       <td>{unit.unitType.name ?? "-"}</td>
                       <td>{area(unit.netArea)}</td>
                       <td>{formatInBase(unit.basePrice, unit.currencyCode)}</td>
@@ -1053,7 +1317,7 @@ export function InventoryPage() {
                   ))}
                   {unitRows.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={7}>
+                      <td className="crm-empty-cell" colSpan={8}>
                         No units found.
                       </td>
                     </tr>
@@ -1135,6 +1399,39 @@ export function InventoryPage() {
                     {projectRows.map((project) => <option key={project.id} value={project.id}>{project.projectCode} - {project.name}</option>)}
                   </select>
                 </label>
+                <label className="crm-field crm-form-wide">
+                  <span className="crm-label">Unit Product</span>
+                  <select className="crm-input" {...unitForm.register("productId")}>
+                    <option value="">No product linked</option>
+                    {productOptions.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.productCode} — {product.productName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {!selectedUnit ? (
+                  <label className="crm-check-field crm-form-wide">
+                    <input type="checkbox" {...unitForm.register("applyProductDefaults")} />
+                    <span>Apply product catalogue defaults on create</span>
+                  </label>
+                ) : null}
+                {selectedUnit && unitForm.watch("productId") ? (
+                  <div className="crm-form-wide">
+                    <button
+                      className="crm-secondary-button"
+                      disabled={applyProductMutation.isPending}
+                      onClick={() => {
+                        const productId = unitForm.getValues("productId");
+                        if (!productId) return;
+                        applyProductMutation.mutate({ unitId: selectedUnit.id, productId });
+                      }}
+                      type="button"
+                    >
+                      Apply Product Defaults
+                    </button>
+                  </div>
+                ) : null}
                 <label className="crm-field"><span className="crm-label">Unit Code</span><input className="crm-input" {...unitForm.register("unitCode")} /></label>
                 <label className="crm-field"><span className="crm-label">Unit Name</span><input className="crm-input" {...unitForm.register("unitName")} /></label>
                 <label className="crm-field"><span className="crm-label">Inventory Code</span><input className="crm-input" {...unitForm.register("inventoryCode")} /></label>
@@ -1192,7 +1489,7 @@ export function InventoryPage() {
                 </div>
                 <div className="crm-check-grid">
                   {[
-                    ["Ocean Front", "oceanFront"], ["Ocean View", "oceanView"], ["Partial Ocean View", "partialOceanView"], ["Garden View", "gardenView"], ["Pool View", "poolView"], ["Corner Unit", "cornerUnit"], ["End Unit", "endUnit"], ["Premium Stack", "premiumStack"], ["Penthouse Level", "penthouseLevel"]
+                    ["Ocean Front", "oceanFront"], ["Ocean View", "oceanView"], ["Partial Ocean View", "partialOceanView"], ["Garden View", "gardenView"], ["Pool View", "poolView"], ["Corner Unit", "cornerUnit"], ["End Unit", "endUnit"], ["Premium Stack", "premiumStack"], ["Penthouse Level", "penthouseLevel"], ["Ocean Oriented Design", "oceanOrientedDesign"], ["Cross Ventilation", "crossVentilation"], ["Natural Daylighting", "naturalDaylighting"]
                   ].map(([label, name]) => <CheckField key={name} label={label} name={name} register={locationForm.register} />)}
                 </div>
                 <label className="crm-field"><span className="crm-label">Remarks</span><textarea className="crm-input crm-textarea" {...locationForm.register("remarks")} /></label>
@@ -1290,6 +1587,152 @@ export function InventoryPage() {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {productModalOpen && selectedProduct ? (
+        <div className="crm-modal-backdrop" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-opportunity-detail-modal crm-product-modal" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>{productModalMode === "edit" ? "Edit Product" : "Product Details"}</h3>
+                <p className="crm-muted-text">
+                  {selectedProduct.productCode} · {selectedProduct.productName}
+                </p>
+              </div>
+              <div className="crm-dashboard-actions">
+                {productModalMode === "view" ? (
+                  <button className="crm-secondary-button crm-fit-button" onClick={() => setProductModalMode("edit")} type="button">
+                    Edit
+                  </button>
+                ) : null}
+                <button className="crm-secondary-button crm-fit-button" onClick={closeProductModal} type="button">
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <div className="crm-opportunity-detail-body">
+              {productModalMode === "edit" ? (
+                <form className="crm-form" onSubmit={onProductSubmit}>
+                  <label className="crm-field">
+                    <span className="crm-label">Product Code</span>
+                    <input className="crm-input" disabled value={selectedProduct.productCode} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Product Name</span>
+                    <input className="crm-input" {...productForm.register("productName")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Target Buyer</span>
+                    <input className="crm-input" {...productForm.register("targetBuyer")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Typical Floor</span>
+                    <input className="crm-input" {...productForm.register("typicalFloorLocation")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Typical View</span>
+                    <input className="crm-input" {...productForm.register("typicalView")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Buyer Profile</span>
+                    <input className="crm-input" {...productForm.register("typicalBuyerProfile")} />
+                  </label>
+                  <label className="crm-field">
+                    <span className="crm-label">Rate Band</span>
+                    <input className="crm-input" {...productForm.register("targetRateBand")} />
+                  </label>
+                  <label className="crm-field crm-form-wide">
+                    <span className="crm-label">Remarks</span>
+                    <textarea className="crm-input crm-textarea" {...productForm.register("remarks")} />
+                  </label>
+                  <div className="crm-modal-actions">
+                    <button className="crm-secondary-button" onClick={() => setProductModalMode("view")} type="button">
+                      Cancel
+                    </button>
+                    <button className="crm-primary-button" disabled={updateProductMutation.isPending} type="submit">
+                      {updateProductMutation.isPending ? "Saving..." : "Save Product"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <h4 className="crm-section-title">Commercial Profile</h4>
+                  <dl className="crm-detail-list crm-unit-view-grid">
+                    <div><dt>Type</dt><dd>{selectedProduct.unitType.name ?? "-"}</dd></div>
+                    <div><dt>Bedrooms</dt><dd>{selectedProduct.bedroomCount ?? "-"}</dd></div>
+                    <div><dt>Target Buyer</dt><dd>{selectedProduct.targetBuyer ?? "-"}</dd></div>
+                    <div><dt>Typical Floor</dt><dd>{selectedProduct.typicalFloorLocation ?? "-"}</dd></div>
+                    <div><dt>Typical View</dt><dd>{selectedProduct.typicalView ?? "-"}</dd></div>
+                    <div><dt>Buyer Profile</dt><dd>{selectedProduct.typicalBuyerProfile ?? "-"}</dd></div>
+                    <div><dt>Ownership</dt><dd>{selectedProduct.ownershipType.name ?? "-"}</dd></div>
+                    <div><dt>Sale Category</dt><dd>{selectedProduct.saleInventoryCategory.name ?? "-"}</dd></div>
+                    <div><dt>Rental Pool</dt><dd>{selectedProduct.rentalPoolEligibility.name ?? "-"}</dd></div>
+                    <div><dt>Investor Appeal</dt><dd>{selectedProduct.investorRentalAppeal.name ?? "-"}</dd></div>
+                    <div><dt>Resale Potential</dt><dd>{selectedProduct.resalePotential.name ?? "-"}</dd></div>
+                    <div><dt>Inventory Priority</dt><dd>{selectedProduct.inventoryPriority.name ?? "-"}</dd></div>
+                    <div><dt>Rate Band</dt><dd>{selectedProduct.targetRateBand ?? "-"}</dd></div>
+                    <div><dt>Parking</dt><dd>{`${selectedProduct.parkingBaysMin ?? "-"}${selectedProduct.parkingBaysMax != null && selectedProduct.parkingBaysMax !== selectedProduct.parkingBaysMin ? `-${selectedProduct.parkingBaysMax}` : ""} bay · ${selectedProduct.parkingPricingMode.name ?? "Bay Fee"}`}</dd></div>
+                    <div><dt>Overall Unit Size</dt><dd>{selectedProduct.overallSizeSource === "SALEABLE_AREA" ? "Total Saleable Area" : selectedProduct.overallSizeSource}</dd></div>
+                    <div><dt>Powder Room</dt><dd>{selectedProduct.powderRoomDefinition === "HALF_BATH" ? "Half-bath" : selectedProduct.powderRoomDefinition}</dd></div>
+                    <div className="crm-field-span-all"><dt>Remarks</dt><dd>{selectedProduct.remarks ?? "-"}</dd></div>
+                  </dl>
+
+                  <h4 className="crm-section-title">Standard Room Layout</h4>
+                  <p className="crm-muted-text">These quantities are applied when a unit is linked to this product and defaults are applied.</p>
+                  <dl className="crm-detail-list crm-unit-view-grid">
+                    {configurationFields.map((field) => {
+                      const configuration = (selectedProduct.defaultsJson?.configuration ?? {}) as Record<string, unknown>;
+                      return (
+                        <div key={field.name}>
+                          <dt>{field.label}</dt>
+                          <dd>{formatCatalogueValue(configuration[field.name])}</dd>
+                        </div>
+                      );
+                    })}
+                    {configurationNoteLabels.map((field) => {
+                      const configuration = (selectedProduct.defaultsJson?.configuration ?? {}) as Record<string, unknown>;
+                      const value = configuration[field.key];
+                      if (value == null || value === "") return null;
+                      return (
+                        <div key={field.key}>
+                          <dt>{field.label}</dt>
+                          <dd>{formatCatalogueValue(value)}</dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+
+                  <h4 className="crm-section-title">Specification Defaults</h4>
+                  <dl className="crm-detail-list crm-unit-view-grid">
+                    {specificationDefaultLabels.map((field) => {
+                      const specification = (selectedProduct.defaultsJson?.specification ?? {}) as Record<string, unknown>;
+                      return (
+                        <div key={field.key}>
+                          <dt>{field.label}</dt>
+                          <dd>{formatCatalogueValue(specification[field.key])}</dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+
+                  <h4 className="crm-section-title">Location Defaults</h4>
+                  <dl className="crm-detail-list crm-unit-view-grid">
+                    {locationDefaultLabels.map((field) => {
+                      const location = (selectedProduct.defaultsJson?.locationAttributes ?? {}) as Record<string, unknown>;
+                      return (
+                        <div key={field.key}>
+                          <dt>{field.label}</dt>
+                          <dd>{formatCatalogueValue(location[field.key])}</dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
       ) : null}
 
       {projectModalOpen ? (

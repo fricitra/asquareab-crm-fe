@@ -4,6 +4,16 @@ import { buildListQueryParams, type ListQueryParams } from "../lib/list-paginati
 type NamedLink = {
   id: string | null;
   name: string | null;
+  code?: string | null;
+};
+
+export type LeadScoreBreakdownItem = {
+  code: string;
+  label: string;
+  maxPoints: number;
+  awardedPoints: number;
+  matchedRuleId: string | null;
+  matchedRuleLabel: string | null;
 };
 
 export type Lead = {
@@ -64,6 +74,11 @@ export type Lead = {
   scoreEngagement: number | null;
   scoreBehavior: number | null;
   scoreFinancial: number | null;
+  scoreComputed?: number | null;
+  scoreBreakdown?: LeadScoreBreakdownItem[] | null;
+  scoreOverridden?: boolean;
+  scoreOverrideReason?: string | null;
+  suggestedRating?: NamedLink;
   status: string;
   remarks: string | null;
 };
@@ -128,6 +143,9 @@ export type UpdateLeadPayload = CreateLeadPayload;
 
 export type LeadDuplicateCheck = {
   isDuplicate: boolean;
+  blockCreate?: boolean;
+  showWarning?: boolean;
+  warningMessage?: string | null;
   lead: { id: string; leadNo: string } | null;
 };
 
@@ -177,6 +195,7 @@ export type QualifyLeadPayload = {
   scoreBehavior?: number;
   scoreFinancial?: number;
   remarks?: string;
+  confirmBelowThreshold?: boolean;
 };
 
 export async function listLeads(params?: ListQueryParams) {
@@ -236,5 +255,16 @@ export async function assignLead(id: string, assignedToUserId: string, assignmen
 
 export async function qualifyLead(id: string, payload: QualifyLeadPayload) {
   const response = await apiClient.post<LeadDetail>(`/leads/${id}/qualify`, payload);
+  return response.data;
+}
+
+export async function recalculateLeadScore(id: string, applySuggestedRating = false) {
+  const response = await apiClient.post<LeadDetail & {
+    scoring?: {
+      scoreComputed: number;
+      breakdown: LeadScoreBreakdownItem[];
+      suggestedClassification: { ratingCode: string; label: string; minScore: number; maxScore: number } | null;
+    };
+  }>(`/leads/${id}/recalculate-score`, { applySuggestedRating });
   return response.data;
 }

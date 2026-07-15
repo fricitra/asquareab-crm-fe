@@ -412,7 +412,13 @@ export function CustomersPage() {
                       </td>
                       <td>{customer.buyerType.name ?? "-"}</td>
                       <td>{customer.defaultProjectCode ?? "-"}</td>
-                      <td>{customer.status}</td>
+                      <td>
+                        {customer.status === "PROSPECT"
+                          ? "Prospect (pre-customer)"
+                          : customer.status === "ACTIVE"
+                            ? "Customer"
+                            : customer.status}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

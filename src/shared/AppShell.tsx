@@ -44,6 +44,7 @@ const navGroups: NavGroup[] = [
     label: "Settings",
     items: [
       { label: "Admin", to: "/admin", icon: "admin" },
+      { label: "Business Rules", to: "/configuration", icon: "targets" },
       { label: "Currencies", to: "/currencies", icon: "currencies" },
       { label: "Reference Data", to: "/reference-data", icon: "reference-data" },
       { label: "Recent Activity", to: "/recent-activity", icon: "activity" }

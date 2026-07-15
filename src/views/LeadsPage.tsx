@@ -11,6 +11,7 @@ import {
   listLeadCampaigns,
   listLeads,
   qualifyLead,
+  recalculateLeadScore,
   updateLead,
   type CreateLeadPayload,
   type Lead,
@@ -22,6 +23,7 @@ import { convertLeadToOpportunity } from "../api/opportunities";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 import { DEFAULT_LIST_PAGE_SIZE, getRowSerialNumber } from "../lib/list-pagination";
 import { getApiErrorMessage } from "../lib/format-api-error";
+import axios from "axios";
 import { useModalEscape } from "../hooks/useModalEscape";
 import {
   buildLeadValidationMessage,
@@ -780,10 +782,42 @@ export function LeadsPage() {
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
+      showNotice("Lead Qualified", `Lead ${lead.leadNo} was qualified successfully.`, "success");
+    },
+    onError: (error, variables) => {
+      const code = axios.isAxiosError(error) ? (error.response?.data as { code?: string } | undefined)?.code : undefined;
+      const message = getApiErrorMessage(error, "Lead could not be qualified. Complete the qualification checklist and try again.");
+      if (code === "QUALIFICATION_SCORE_BELOW_THRESHOLD") {
+        const confirmed = window.confirm(`${message}\n\nClick OK to confirm qualification below threshold.`);
+        if (confirmed) {
+          qualifyMutation.mutate({
+            id: variables.id,
+            payload: { ...variables.payload, confirmBelowThreshold: true }
+          });
+          return;
+        }
+      }
+      showNotice("Qualification Failed", message, "error");
+    }
+  });
+
+  const recalculateScoreMutation = useMutation({
+    mutationFn: ({ id, applySuggestedRating }: { id: string; applySuggestedRating?: boolean }) =>
+      recalculateLeadScore(id, applySuggestedRating),
+    onSuccess: (lead) => {
+      setSelectedLeadId(lead.id);
+      queryClient.setQueryData(["lead", lead.id], lead);
+      void queryClient.invalidateQueries({ queryKey: ["leads"] });
+      void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
+      qualifyForm.setValue("scoreTotal", lead.scoreTotal == null ? "" : String(lead.scoreTotal));
+      showNotice(
+        "Score Recalculated",
+        `Computed score ${lead.scoreComputed ?? lead.scoreTotal ?? 0}. Suggested rating: ${lead.suggestedRating?.name ?? "—"}.`,
+        "success"
+      );
     },
     onError: (error) => {
-      const message = getApiErrorMessage(error, "Lead could not be qualified. Complete the qualification checklist and try again.");
-      showNotice("Qualification Failed", message, "error");
+      showNotice("Score Recalculation Failed", getApiErrorMessage(error), "error");
     }
   });
 
@@ -1015,10 +1049,11 @@ export function LeadsPage() {
 
       if (duplicate.isDuplicate && duplicate.lead) {
         const message =
-          "A lead already exists with the same First Name, Last Name, Mobile, and Email.\n" +
-          "All four values must match (names and email ignore case; mobile ignores spaces and symbols).\n" +
-          `Existing lead: ${duplicate.lead.leadNo}`;
-        showNotice("Duplicate Lead Detected", message, "error");
+          (duplicate.warningMessage ? `${duplicate.warningMessage}\n\n` : "") +
+          "A lead already exists matching the configured duplicate rules.\n" +
+          `Existing lead: ${duplicate.lead.leadNo}\n` +
+          "Creation is blocked. Resolve the duplicate before continuing.";
+        showNotice("Duplicate Lead — Blocked", message, "error");
         return;
       }
 
@@ -1554,6 +1589,45 @@ export function LeadsPage() {
                           <span className="crm-label">Score</span>
                           <input className="crm-input" {...qualifyForm.register("scoreTotal")} />
                         </label>
+                        <div className="crm-lead-score-panel">
+                          <p className="crm-muted-text">
+                            Computed: <strong>{selectedLead.scoreComputed ?? "—"}</strong>
+                            {" · "}
+                            Suggested rating: <strong>{selectedLead.suggestedRating?.name ?? "—"}</strong>
+                            {" · "}
+                            Current rating: <strong>{selectedLead.leadRating.name ?? "—"}</strong>
+                          </p>
+                          {Array.isArray(selectedLead.scoreBreakdown) && selectedLead.scoreBreakdown.length ? (
+                            <ul className="crm-config-rule-list">
+                              {selectedLead.scoreBreakdown.map((item) => (
+                                <li key={item.code}>
+                                  {item.label}: {item.awardedPoints}/{item.maxPoints}
+                                  {item.matchedRuleLabel ? ` (${item.matchedRuleLabel})` : ""}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          <div className="crm-lead-score-actions">
+                            <button
+                              className="crm-secondary-button crm-fit-button"
+                              disabled={recalculateScoreMutation.isPending}
+                              onClick={() => recalculateScoreMutation.mutate({ id: selectedLead.id })}
+                              type="button"
+                            >
+                              Recalculate Score
+                            </button>
+                            <button
+                              className="crm-secondary-button crm-fit-button"
+                              disabled={recalculateScoreMutation.isPending || !selectedLead.suggestedRating?.id}
+                              onClick={() =>
+                                recalculateScoreMutation.mutate({ id: selectedLead.id, applySuggestedRating: true })
+                              }
+                              type="button"
+                            >
+                              Apply Suggested Rating
+                            </button>
+                          </div>
+                        </div>
                         <label className="crm-field">
                           <span className="crm-label">Notes</span>
                           <textarea className="crm-input crm-textarea" {...qualifyForm.register("qualificationNotes")} />
