@@ -16,12 +16,32 @@ export type PaymentPlanLine = {
   id: string;
   paymentPlanId: string;
   sequenceNo: number;
+  milestoneRefId: string | null;
+  milestoneCode: string | null;
   milestoneLabel: string | null;
+  lineType: "RESERVATION" | "INSTALLMENT";
   dueDate: string | null;
   amount: number;
   percentageOfContract: number | null;
   erpReceivableLineId: string | null;
   status: string;
+  remarks: string | null;
+};
+
+export type PaymentPlanTaxLine = {
+  id: string;
+  paymentPlanId: string | null;
+  taxRuleRefId: string | null;
+  taxCode: string;
+  taxName: string;
+  calculationType: "PERCENT" | "FIXED";
+  ratePercent: number | null;
+  fixedAmount: number | null;
+  taxableAmount: number | null;
+  taxAmount: number;
+  currencyCode: string;
+  paymentOutsideCrm: boolean;
+  sequenceNo: number;
   remarks: string | null;
 };
 
@@ -37,6 +57,7 @@ export type PaymentPlan = {
   updatedAt: string | null;
   remarks: string | null;
   lines: PaymentPlanLine[];
+  taxLines: PaymentPlanTaxLine[];
 };
 
 export type ErpHandoff = {
@@ -70,6 +91,8 @@ export type Contract = {
   reservation: {
     id: string | null;
     reservationNo: string | null;
+    amount: number | null;
+    currencyCode: string | null;
   };
   opportunity: {
     id: string | null;
@@ -108,6 +131,20 @@ export type Contract = {
   statusHistory?: ContractStatusHistory[];
   paymentPlans?: PaymentPlan[];
   erpHandoff?: ErpHandoff | null;
+  commercialSummary?: {
+    contractValue: number;
+    reservationAmount: number;
+    balanceAmount: number;
+    currencyCode: string | null;
+    baseCurrencyCode: string;
+    contractValueBase: number;
+    reservationAmountBase: number;
+    balanceAmountBase: number;
+    totalTaxAmount: number;
+    totalPayableBase: number;
+    taxLines: PaymentPlanTaxLine[];
+    hasCompletePaymentPlan: boolean;
+  };
 };
 
 export type CreateContractPayload = {
@@ -123,10 +160,10 @@ export type CreatePaymentPlanPayload = {
   remarks?: string;
   lines: Array<{
     sequenceNo: number;
+    milestoneRefId: string;
     milestoneLabel?: string;
     dueDate?: string;
-    amount: number;
-    percentageOfContract?: number;
+    percentageOfContract: number;
     remarks?: string;
   }>;
 };

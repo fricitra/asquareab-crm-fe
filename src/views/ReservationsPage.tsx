@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller } from "react-hook-form";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { listCurrencies } from "../api/currencies";
+import { getUnit, type Unit } from "../api/inventory";
 import { listOpportunities } from "../api/opportunities";
 import {
   approveReservation,
@@ -56,6 +57,23 @@ function defaultReservationExpiryDate() {
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + 30);
   return expiry.toISOString().slice(0, 10);
+}
+
+async function resolveUnitReservationPricing(unit: Unit) {
+  try {
+    const detail = await getUnit(unit.id);
+    const sales = detail.catalogue?.salesInformation;
+    const amount = sales?.reservationAmount ?? sales?.approvedSellingPrice ?? detail.basePrice ?? unit.basePrice;
+    return {
+      amount: amount == null ? "" : String(amount),
+      currencyCode: detail.currencyCode ?? unit.currencyCode ?? ""
+    };
+  } catch {
+    return {
+      amount: unit.basePrice == null ? "" : String(unit.basePrice),
+      currencyCode: unit.currencyCode ?? ""
+    };
+  }
 }
 
 function reservationWorkflowSteps(
@@ -179,9 +197,9 @@ export function ReservationsPage() {
     setSelectedReservationId(selectedId);
     setReservationDetailModalOpen(true);
 
-    const createNotice = (location.state as { createNotice?: string } | null)?.createNotice;
-    if (createNotice) {
-      showNotice("Reservation Created", `Reservation ${createNotice} was created successfully.`, "success");
+    const createdForName = (location.state as { createdForName?: string } | null)?.createdForName;
+    if (createdForName) {
+      showNotice("Reservation Created", `Reservation for ${createdForName} was created successfully.`, "success");
     }
 
     const nextParams = new URLSearchParams(searchParams);
@@ -237,7 +255,7 @@ export function ReservationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunity"] });
-      showNotice("Reservation Created", `Reservation ${reservation.reservationNo} was created successfully.`, "success");
+      showNotice("Reservation Created", `Reservation for ${reservation.customer.name ?? "Customer"} was created successfully.`, "success");
     },
     onError: (error) => {
       showNotice("Reservation Failed", getApiErrorMessage(error, "Reservation could not be created."), "error");
@@ -250,7 +268,7 @@ export function ReservationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
-      showNotice("Reservation Cancelled", `Reservation ${reservation.reservationNo} was cancelled.`, "success");
+      showNotice("Reservation Cancelled", `Reservation for ${reservation.customer.name ?? "Customer"} was cancelled.`, "success");
     },
     onError: (error) => {
       showNotice("Cancellation Failed", getApiErrorMessage(error, "Reservation could not be cancelled."), "error");
@@ -264,7 +282,7 @@ export function ReservationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
       void queryClient.invalidateQueries({ queryKey: ["opportunity"] });
-      showNotice("Reservation Approved", `Reservation ${reservation.reservationNo} was approved.`, "success");
+      showNotice("Reservation Approved", `Reservation for ${reservation.customer.name ?? "Customer"} was approved.`, "success");
     },
     onError: (error) => {
       showNotice("Approval Failed", getApiErrorMessage(error, "Reservation could not be approved."), "error");
@@ -650,6 +668,10 @@ export function ReservationsPage() {
         onSelect={(unit) => {
           reservationForm.setValue("unitId", unit.id);
           reservationForm.setValue("unitCode", unit.unitCode);
+          void resolveUnitReservationPricing(unit).then((pricing) => {
+            reservationForm.setValue("reservationAmount", pricing.amount);
+            reservationForm.setValue("currencyCode", pricing.currencyCode || defaultContractCurrency);
+          });
         }}
         open={unitPickerOpen}
         projectCode={selectedOpportunity?.projectCode}

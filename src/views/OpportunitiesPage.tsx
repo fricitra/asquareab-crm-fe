@@ -13,7 +13,7 @@ import {
   type OpportunityDetail
 } from "../api/opportunities";
 import { getReferenceFamily } from "../api/reference-data";
-import { listUnits } from "../api/inventory";
+import { getUnit, listUnits, type Unit } from "../api/inventory";
 import { createReservation, listReservations, type Reservation } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
@@ -62,6 +62,23 @@ function defaultReservationExpiryDate() {
   const expiry = new Date();
   expiry.setDate(expiry.getDate() + 30);
   return expiry.toISOString().slice(0, 10);
+}
+
+async function resolveUnitReservationPricing(unit: Unit) {
+  try {
+    const detail = await getUnit(unit.id);
+    const sales = detail.catalogue?.salesInformation;
+    const amount = sales?.reservationAmount ?? sales?.approvedSellingPrice ?? detail.basePrice ?? unit.basePrice;
+    return {
+      amount: amount == null ? "" : String(amount),
+      currencyCode: detail.currencyCode ?? unit.currencyCode ?? ""
+    };
+  } catch {
+    return {
+      amount: unit.basePrice == null ? "" : String(unit.basePrice),
+      currencyCode: unit.currencyCode ?? ""
+    };
+  }
 }
 
 type NoticeState = {
@@ -299,9 +316,9 @@ export function OpportunitiesPage() {
     setSelectedOpportunityId(selectedId);
     setOpportunityDetailModalOpen(true);
 
-    const convertNotice = (location.state as { convertNotice?: string } | null)?.convertNotice;
-    if (convertNotice) {
-      showNotice("Lead Converted", `Lead converted successfully. Opportunity ${convertNotice} is ready.`, "success");
+    const convertedLeadName = (location.state as { convertedLeadName?: string } | null)?.convertedLeadName;
+    if (convertedLeadName) {
+      showNotice("Lead Converted", `${convertedLeadName} was converted successfully. The opportunity is ready.`, "success");
     }
 
     const nextParams = new URLSearchParams(searchParams);
@@ -387,7 +404,11 @@ export function OpportunitiesPage() {
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
 
       if (variables.payload.lostReasonRefId) {
-        showNotice("Opportunity Marked Lost", `Opportunity ${opportunity.opportunityNo} was marked as lost.`, "success");
+        showNotice(
+          "Opportunity Marked Lost",
+          `${opportunity.customer.name ?? "Customer"}'s opportunity was marked as lost.`,
+          "success"
+        );
         return;
       }
 
@@ -456,7 +477,7 @@ export function OpportunitiesPage() {
       }
       closeOpportunityDetailModal();
       navigate(`/reservations?selected=${reservation.id}`, {
-        state: { createNotice: reservation.reservationNo }
+        state: { createdForName: reservation.customer.name ?? selectedOpportunity?.customer.name ?? "Customer" }
       });
     },
     onError: (error) => {
@@ -782,9 +803,7 @@ export function OpportunitiesPage() {
                           <button
                             className="crm-secondary-button crm-opportunity-action-button"
                             onClick={() =>
-                              navigate(`/reservations?selected=${activeOpportunityReservation?.id}`, {
-                                state: { createNotice: activeOpportunityReservation?.reservationNo }
-                              })
+                              navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)
                             }
                             type="button"
                           >
@@ -813,9 +832,7 @@ export function OpportunitiesPage() {
                             <button
                               className="crm-secondary-button crm-opportunity-action-button"
                               onClick={() =>
-                                navigate(`/reservations?selected=${activeOpportunityReservation?.id}`, {
-                                  state: { createNotice: activeOpportunityReservation?.reservationNo }
-                                })
+                                navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)
                               }
                               type="button"
                             >
@@ -1171,6 +1188,13 @@ export function OpportunitiesPage() {
         onSelect={(unit) => {
           reservationForm.setValue("unitId", unit.id);
           reservationForm.setValue("unitCode", unit.unitCode);
+          void resolveUnitReservationPricing(unit).then((pricing) => {
+            reservationForm.setValue("reservationAmount", pricing.amount);
+            reservationForm.setValue(
+              "currencyCode",
+              pricing.currencyCode || selectedOpportunity?.currencyCode || ""
+            );
+          });
         }}
         open={reservationUnitPickerOpen}
         projectCode={selectedOpportunity?.projectCode}

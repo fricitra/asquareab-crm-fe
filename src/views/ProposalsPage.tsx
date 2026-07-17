@@ -608,18 +608,18 @@ export function ProposalsPage() {
       });
       refreshProposal(proposal, "Proposal created.");
     },
-    onError: (error) => setMessage(getApiErrorMessage(error) || "Proposal could not be created.")
+    onError: (error) => setMessage(getApiErrorMessage(error, "Proposal could not be created."))
   });
 
   const submitMutation = useMutation({
     mutationFn: (id: string) => submitProposal(id, pickString(actionForm.getValues("remarks"))),
     onSuccess: (proposal) => refreshProposal(proposal, "Proposal submitted."),
-    onError: () => setMessage("Proposal could not be submitted.")
+    onError: (error) => setMessage(getApiErrorMessage(error, "Proposal could not be submitted."))
   });
   const approveMutation = useMutation({
     mutationFn: (id: string) => approveProposal(id, pickString(actionForm.getValues("remarks"))),
     onSuccess: (proposal) => refreshProposal(proposal, "Proposal approved."),
-    onError: () => setMessage("Proposal could not be approved.")
+    onError: (error) => setMessage(getApiErrorMessage(error, "Proposal could not be approved."))
   });
   const rejectMutation = useMutation({
     mutationFn: (id: string) => rejectProposal(id, actionForm.getValues("rejectionReason")),
@@ -627,7 +627,7 @@ export function ProposalsPage() {
       actionForm.reset({ remarks: "", rejectionReason: "" });
       refreshProposal(proposal, "Proposal rejected.");
     },
-    onError: () => setMessage("Proposal could not be rejected.")
+    onError: (error) => setMessage(getApiErrorMessage(error, "Proposal could not be rejected."))
   });
   const acceptMutation = useMutation({
     mutationFn: (id: string) => acceptProposal(id, pickString(actionForm.getValues("remarks"))),
@@ -636,7 +636,7 @@ export function ProposalsPage() {
       void queryClient.invalidateQueries({ queryKey: ["opportunity", proposal.opportunity.id] });
       refreshProposal(proposal, "Proposal accepted. Opportunity moved to Won.");
     },
-    onError: () => setMessage("Proposal could not be accepted.")
+    onError: (error) => setMessage(getApiErrorMessage(error, "Proposal could not be accepted."))
   });
 
   const onProposalSubmit = proposalForm.handleSubmit((values) => {

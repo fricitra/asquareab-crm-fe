@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm, Controller } from "react-hook-form";
+import { useFieldArray, useForm, Controller } from "react-hook-form";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { getApiErrorMessage } from "../api/auth";
 import { listCurrencies } from "../api/currencies";
@@ -18,11 +18,13 @@ import {
   type Contract
 } from "../api/contracts";
 import { listReservations } from "../api/reservations";
+import { getReferenceFamily } from "../api/reference-data";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
+import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 
@@ -35,15 +37,13 @@ type ContractFormValues = {
 
 type PaymentPlanFormValues = {
   planName: string;
-  line1Label: string;
-  line1DueDate: string;
-  line1Amount: string;
-  line1Percent: string;
-  line2Label: string;
-  line2DueDate: string;
-  line2Amount: string;
-  line2Percent: string;
   remarks: string;
+  stages: Array<{
+    milestoneRefId: string;
+    milestoneLabel: string;
+    dueDate: string;
+    percentage: string;
+  }>;
 };
 
 type ErpFormValues = {
@@ -57,6 +57,13 @@ type ContractHandoffState = {
   contractValue?: number;
   currencyCode?: string;
   remarks?: string;
+};
+
+type NoticeState = {
+  open: boolean;
+  title: string;
+  message: string;
+  variant: "error" | "success" | "info";
 };
 
 function pickString(value: string) {
@@ -88,10 +95,17 @@ function contractNextAction(contract: Contract) {
     };
   }
   if (contract.contractStatus.code === "ISSUED") {
+    if (!contract.commercialSummary?.hasCompletePaymentPlan) {
+      return {
+        title: "Complete payment plan",
+        summary: "Save the reservation stage, tax snapshot, and remaining installment stages before signing.",
+        dataNeeded: "Configured stages must total 100% of the balance after reservation."
+      };
+    }
     return {
       title: "Sign contract",
-      summary: "Mark the contract signed after the buyer and authorized team complete the agreement.",
-      dataNeeded: "No additional data required for baseline signing."
+      summary: "The payment plan is complete. Sign after the buyer and authorized team confirm the agreement.",
+      dataNeeded: "No additional payment-plan data required."
     };
   }
   if (contract.erpHandoffStatus === "HANDED_OFF") {
@@ -115,13 +129,6 @@ function contractNextAction(contract: Contract) {
       dataNeeded: contract.erpHandoff?.errorMessage ?? "ERP failure reason."
     };
   }
-  if ((contract.paymentPlans ?? []).length === 0) {
-    return {
-      title: "Save payment plan",
-      summary: "Create the commercial payment schedule before preparing the ERP handoff.",
-      dataNeeded: "Milestones, due dates, amounts, and percentages."
-    };
-  }
   return {
     title: "Mark ERP ready",
     summary: "Prepare the signed contract and payment-plan payload for ERP handoff.",
@@ -139,6 +146,7 @@ function contractWorkflowSteps(
   const isCancelled = status === "CANCELLED";
   const isIssued = status === "ISSUED" || status === "SIGNED";
   const isSigned = status === "SIGNED";
+  const hasPaymentPlan = contract.commercialSummary?.hasCompletePaymentPlan ?? false;
   const handoffStarted = ["READY", "HANDED_OFF", "FAILED"].includes(contract.erpHandoffStatus);
   const handoffReady = contract.erpHandoffStatus === "READY" || contract.erpHandoffStatus === "HANDED_OFF";
   const handoffFailed = contract.erpHandoffStatus === "FAILED";
@@ -170,6 +178,21 @@ function contractWorkflowSteps(
       role: historyByCode.get("ISSUED")?.changedByUser.role ?? null,
       summary: isIssued ? historyByCode.get("ISSUED")?.remarks ?? "Contract has been issued for signing." : "Issue the draft contract after checking buyer and unit details.",
       details: [{ label: "Current Status", value: contract.contractStatus.name }]
+    },
+    {
+      id: "payment-plan",
+      title: "Payment Plan",
+      status: isCancelled ? "blocked" : hasPaymentPlan ? "completed" : isIssued ? "current" : "next",
+      timestamp: contract.paymentPlans?.find((plan) => plan.isActive)?.updatedAt ?? null,
+      user: contract.updatedBy.name,
+      role: contract.updatedBy.role,
+      summary: hasPaymentPlan
+        ? "Reservation, configured installment stages, and taxes have been captured."
+        : "Complete the payment plan before signing.",
+      details: [
+        { label: "Reservation Stage", value: formatValue(contract.commercialSummary?.reservationAmount ?? 0, contract.currencyCode) },
+        { label: "Balance", value: formatValue(contract.commercialSummary?.balanceAmount ?? 0, contract.currencyCode) }
+      ]
     },
     {
       id: "signed",
@@ -230,7 +253,17 @@ export function ContractsPage() {
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [contractDetailModalOpen, setContractDetailModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
+    open: false,
+    title: "",
+    message: "",
+    variant: "info"
+  });
+
+  const showNotice = (title: string, message: string, variant: NoticeState["variant"]) => {
+    setNoticeDialog({ open: true, title, message, variant });
+  };
+  const closeNotice = () => setNoticeDialog((current) => ({ ...current, open: false }));
 
   const contractForm = useForm<ContractFormValues>({
     defaultValues: { reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" }
@@ -238,17 +271,18 @@ export function ContractsPage() {
   const paymentPlanForm = useForm<PaymentPlanFormValues>({
     defaultValues: {
       planName: "Standard Payment Plan",
-      line1Label: "Booking",
-      line1DueDate: "",
-      line1Amount: "",
-      line1Percent: "",
-      line2Label: "Handover",
-      line2DueDate: "",
-      line2Amount: "",
-      line2Percent: "",
-      remarks: ""
+      remarks: "",
+      stages: [
+        { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "20" },
+        { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "80" }
+      ]
     }
   });
+  const paymentStageFields = useFieldArray({
+    control: paymentPlanForm.control,
+    name: "stages"
+  });
+  const watchedPaymentStages = paymentPlanForm.watch("stages");
   const erpForm = useForm<ErpFormValues>({
     defaultValues: { erpContractId: "", errorMessage: "", remarks: "" }
   });
@@ -285,9 +319,14 @@ export function ContractsPage() {
     queryFn: () => listCurrencies({ contractAllowed: true, activeOnly: true }),
     staleTime: 60_000
   });
+  const paymentStagesQuery = useQuery({
+    queryKey: ["reference-family", "CONTRACT", "PAYMENT_STAGE"],
+    queryFn: () => getReferenceFamily("CONTRACT", "PAYMENT_STAGE"),
+    staleTime: 60_000
+  });
 
-  const refreshContract = (contract: Contract, successMessage: string) => {
-    setMessage(successMessage);
+  const refreshContract = (contract: Contract, successTitle: string, successMessage: string) => {
+    showNotice(successTitle, successMessage, "success");
     setSelectedContractId(contract.id);
     setContractDetailModalOpen(true);
     queryClient.setQueryData(["contract", contract.id], contract);
@@ -333,79 +372,78 @@ export function ContractsPage() {
     onSuccess: (contract) => {
       setCreateOpen(false);
       handoffNoteRef.current = null;
-      refreshContract(contract, "Contract draft is ready.");
+      refreshContract(contract, "Contract Created", `Contract ${contract.contractNo} draft is ready. Next: issue the contract (Step 1).`);
       contractForm.reset({ reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" });
     },
-    onError: (error) => setMessage(getApiErrorMessage(error) || "Contract could not be created. Use an approved reservation.")
+    onError: (error) =>
+      showNotice("Contract Not Created", getApiErrorMessage(error, "Contract could not be created. Use an approved reservation."), "error")
   });
 
   const issueMutation = useMutation({
     mutationFn: (contractId: string) => issueContract(contractId, "Contract issued from CRM workspace"),
-    onSuccess: (contract) => refreshContract(contract, "Contract issued."),
-    onError: () => setMessage("Contract could not be issued.")
+    onSuccess: (contract) =>
+      refreshContract(contract, "Contract Issued", "Contract issued. Next: save the payment plan (Step 2), then sign (Step 3)."),
+    onError: (error) => showNotice("Issue Failed", getApiErrorMessage(error, "Contract could not be issued."), "error")
   });
   const signMutation = useMutation({
     mutationFn: (contractId: string) => signContract(contractId, "Contract signed from CRM workspace"),
-    onSuccess: (contract) => refreshContract(contract, "Contract signed."),
-    onError: () => setMessage("Contract could not be signed.")
+    onSuccess: (contract) =>
+      refreshContract(contract, "Contract Signed", "Contract signed. Next: prepare the ERP handoff when ready."),
+    onError: (error) => showNotice("Sign Failed", getApiErrorMessage(error, "Contract could not be signed."), "error")
   });
   const cancelMutation = useMutation({
     mutationFn: (contractId: string) => cancelContract(contractId, "Contract cancelled from CRM workspace"),
-    onSuccess: (contract) => refreshContract(contract, "Contract cancelled."),
-    onError: () => setMessage("Contract could not be cancelled.")
+    onSuccess: (contract) => refreshContract(contract, "Contract Cancelled", "The contract was cancelled."),
+    onError: (error) => showNotice("Cancel Failed", getApiErrorMessage(error, "Contract could not be cancelled."), "error")
   });
   const paymentPlanMutation = useMutation({
     mutationFn: ({ contractId, currencyCode, values }: { contractId: string; currencyCode: string | null; values: PaymentPlanFormValues }) => {
-      const firstAmount = pickNumber(values.line1Amount);
-      const secondAmount = pickNumber(values.line2Amount);
       return createPaymentPlan(contractId, {
         planName: values.planName,
         currencyCode: currencyCode ?? "USD",
         remarks: pickString(values.remarks),
-        lines: [
-          {
-            sequenceNo: 1,
-            milestoneLabel: pickString(values.line1Label),
-            dueDate: pickString(values.line1DueDate),
-            amount: firstAmount ?? 0,
-            percentageOfContract: pickNumber(values.line1Percent)
-          },
-          {
-            sequenceNo: 2,
-            milestoneLabel: pickString(values.line2Label),
-            dueDate: pickString(values.line2DueDate),
-            amount: secondAmount ?? 0,
-            percentageOfContract: pickNumber(values.line2Percent)
-          }
-        ].filter((line) => line.amount > 0)
+        lines: values.stages.map((stage, index) => ({
+          sequenceNo: index + 1,
+          milestoneRefId: stage.milestoneRefId,
+          milestoneLabel: pickString(stage.milestoneLabel),
+          dueDate: pickString(stage.dueDate),
+          percentageOfContract: pickNumber(stage.percentage) ?? 0
+        }))
       });
     },
-    onSuccess: (contract) => refreshContract(contract, "Payment plan saved."),
-    onError: () => setMessage("Payment plan could not be saved. Check total amount and required lines.")
+    onSuccess: (contract) =>
+      refreshContract(contract, "Payment Plan Saved", "Payment plan saved. Next: sign the contract (Step 3)."),
+    onError: (error) => showNotice("Payment Plan Not Saved", getApiErrorMessage(error, "Payment plan could not be saved."), "error")
   });
   const readyMutation = useMutation({
     mutationFn: (contractId: string) => markErpHandoffReady(contractId, "Contract payload prepared for ERP"),
-    onSuccess: (contract) => refreshContract(contract, "ERP handoff marked ready."),
-    onError: () => setMessage("ERP handoff could not be marked ready. Sign the contract first.")
+    onSuccess: (contract) => refreshContract(contract, "ERP Handoff Ready", "ERP handoff marked ready."),
+    onError: (error) =>
+      showNotice("ERP Handoff Failed", getApiErrorMessage(error, "ERP handoff could not be marked ready. Sign the contract first."), "error")
   });
   const completeMutation = useMutation({
     mutationFn: ({ contractId, values }: { contractId: string; values: ErpFormValues }) =>
       markErpHandoffCompleted(contractId, pickString(values.erpContractId), pickString(values.remarks)),
-    onSuccess: (contract) => refreshContract(contract, "ERP handoff marked complete."),
-    onError: () => setMessage("ERP handoff could not be marked complete.")
+    onSuccess: (contract) => refreshContract(contract, "ERP Handoff Complete", "ERP handoff marked complete."),
+    onError: (error) => showNotice("ERP Handoff Failed", getApiErrorMessage(error, "ERP handoff could not be marked complete."), "error")
   });
   const failedMutation = useMutation({
     mutationFn: ({ contractId, values }: { contractId: string; values: ErpFormValues }) =>
       markErpHandoffFailed(contractId, values.errorMessage, pickString(values.remarks)),
-    onSuccess: (contract) => refreshContract(contract, "ERP handoff marked failed."),
-    onError: () => setMessage("ERP handoff failure could not be recorded.")
+    onSuccess: (contract) => refreshContract(contract, "ERP Handoff Failure Recorded", "The ERP handoff failure was recorded."),
+    onError: (error) => showNotice("ERP Update Failed", getApiErrorMessage(error, "ERP handoff failure could not be recorded."), "error")
   });
 
   const contractRows = contractsQuery.data?.items ?? [];
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedContract = contractDetailQuery.data ?? contractRows.find((contract) => contract.id === selectedContractId) ?? null;
+  const activePaymentPlan = selectedContract?.paymentPlans?.find((plan) => plan.isActive) ?? null;
   const selectedContractNextAction = selectedContract ? contractNextAction(selectedContract) : null;
   const selectedContractIsClosed = selectedContract?.erpHandoffStatus === "HANDED_OFF";
+  const paymentPercentageTotal = (watchedPaymentStages ?? []).reduce(
+    (sum, stage) => sum + (pickNumber(stage.percentage) ?? 0),
+    0
+  );
   const availableReservations =
     reservationsQuery.data?.items.filter((reservation) =>
       ["APPROVED", "CONVERTED_TO_CONTRACT"].includes(reservation.reservationStatus.code ?? "")
@@ -421,15 +459,57 @@ export function ContractsPage() {
     };
   }, [contractsQuery.data]);
 
+  useEffect(() => {
+    if (!selectedContract || !contractDetailModalOpen) return;
+    const installmentLines = activePaymentPlan?.lines.filter((line) => line.lineType === "INSTALLMENT") ?? [];
+    paymentPlanForm.reset({
+      planName: activePaymentPlan?.planName ?? "Standard Payment Plan",
+      remarks: "",
+      stages:
+        installmentLines.length > 0
+          ? installmentLines.map((line) => ({
+              milestoneRefId: line.milestoneRefId ?? "",
+              milestoneLabel: line.milestoneLabel ?? "",
+              dueDate: line.dueDate ?? "",
+              percentage: line.percentageOfContract == null ? "" : String(line.percentageOfContract)
+            }))
+          : [
+              { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "20" },
+              { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "80" }
+            ]
+    });
+  }, [activePaymentPlan?.id, contractDetailModalOpen, selectedContract?.id]);
+
   const onContractSubmit = contractForm.handleSubmit((values) => {
     if (!values.reservationId) {
-      setMessage("Select an approved reservation.");
+      showNotice("Reservation Required", "Select an approved reservation before creating the contract.", "error");
       return;
     }
     createMutation.mutate(values);
   });
   const onPaymentPlanSubmit = paymentPlanForm.handleSubmit((values) => {
     if (!selectedContract) return;
+    if (selectedContract.contractStatus.code === "DRAFT") {
+      showNotice("Issue Contract First", "Step 1 is issuing the contract. Save the payment plan after it is issued.", "error");
+      return;
+    }
+    if (values.stages.some((stage) => !stage.milestoneRefId)) {
+      showNotice("Payment Stage Missing", "Select a configured payment stage for every installment.", "error");
+      return;
+    }
+    const total = values.stages.reduce((sum, stage) => sum + (pickNumber(stage.percentage) ?? 0), 0);
+    if (Math.abs(total - 100) > 0.0001) {
+      showNotice(
+        "Percentages Incomplete",
+        `Remaining payment-stage percentages must total exactly 100%. Current total: ${total.toFixed(2)}%.`,
+        "error"
+      );
+      return;
+    }
+    if (selectedContract.contractStatus.code === "SIGNED" && !pickString(values.remarks)) {
+      showNotice("Change Notes Required", "Enter change notes before updating a signed payment plan.", "error");
+      return;
+    }
     paymentPlanMutation.mutate({ contractId: selectedContract.id, currencyCode: selectedContract.currencyCode, values });
   });
   const onErpComplete = erpForm.handleSubmit((values) => {
@@ -438,7 +518,7 @@ export function ContractsPage() {
   });
   const onErpFailed = erpForm.handleSubmit((values) => {
     if (!selectedContract || values.errorMessage.trim() === "") {
-      setMessage("Enter ERP failure message.");
+      showNotice("Failure Message Required", "Enter the ERP failure message before recording the failure.", "error");
       return;
     }
     failedMutation.mutate({ contractId: selectedContract.id, values });
@@ -459,8 +539,8 @@ export function ContractsPage() {
     setSearchParams(nextParams, { replace: true });
   }, [location.state, searchParams, setSearchParams]);
 
-  useModalEscape(contractDetailModalOpen, closeContractDetailModal, { disabled: createOpen });
-  useModalEscape(createOpen, () => setCreateOpen(false));
+  useModalEscape(contractDetailModalOpen, closeContractDetailModal, { disabled: createOpen || noticeDialog.open });
+  useModalEscape(createOpen, () => setCreateOpen(false), { disabled: noticeDialog.open });
 
   const selectedReservation = availableReservations.find(
     (reservation) => reservation.id === contractForm.watch("reservationId")
@@ -487,7 +567,7 @@ export function ContractsPage() {
           <div className="crm-kpi">{stats.total}</div>
         </article>
         <article className="crm-card">
-          <h3>Draft</h3>
+          <h3>Draft / Issued</h3>
           <div className="crm-kpi">{stats.draft}</div>
         </article>
         <article className="crm-card">
@@ -499,8 +579,6 @@ export function ContractsPage() {
           <div className="crm-kpi">{formatInBase(stats.value)}</div>
         </article>
       </section>
-
-      {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
 
       {createOpen ? (
         <div className="crm-modal-backdrop" role="presentation">
@@ -729,23 +807,63 @@ export function ContractsPage() {
                           <p className="crm-muted-text">
                             Current status: {selectedContract.contractStatus.name ?? "-"} · ERP: {selectedContract.erpHandoffStatus}
                           </p>
+                          <p className="crm-muted-text">
+                            Order: 1. Issue Contract → 2. Save Payment Plan (below) → 3. Sign Contract → 4. ERP Handoff.
+                          </p>
                         </div>
                         <div className="crm-opportunity-action-card-footer">
                           <button
                             className={`crm-opportunity-action-button ${selectedContract.contractStatus.code === "DRAFT" ? "crm-primary-button" : "crm-secondary-button"}`}
-                            disabled={selectedContract.contractStatus.code !== "DRAFT" || issueMutation.isPending}
-                            onClick={() => issueMutation.mutate(selectedContract.id)}
+                            disabled={issueMutation.isPending}
+                            onClick={() => {
+                              if (selectedContract.contractStatus.code !== "DRAFT") {
+                                showNotice(
+                                  "Already Issued",
+                                  `Step 1 is complete. The contract is ${selectedContract.contractStatus.name ?? "past draft"}.`,
+                                  "info"
+                                );
+                                return;
+                              }
+                              issueMutation.mutate(selectedContract.id);
+                            }}
                             type="button"
                           >
-                            {issueMutation.isPending ? "Issuing..." : "Issue Contract"}
+                            {issueMutation.isPending ? "Issuing..." : "1. Issue Contract"}
                           </button>
                           <button
-                            className={`crm-opportunity-action-button ${selectedContract.contractStatus.code === "ISSUED" ? "crm-primary-button" : "crm-secondary-button"}`}
-                            disabled={selectedContract.contractStatus.code !== "ISSUED" || signMutation.isPending}
-                            onClick={() => signMutation.mutate(selectedContract.id)}
+                            className={`crm-opportunity-action-button ${
+                              selectedContract.contractStatus.code === "ISSUED" &&
+                              selectedContract.commercialSummary?.hasCompletePaymentPlan
+                                ? "crm-primary-button"
+                                : "crm-secondary-button"
+                            }`}
+                            disabled={signMutation.isPending}
+                            onClick={() => {
+                              if (selectedContract.contractStatus.code === "SIGNED") {
+                                showNotice("Already Signed", "Step 3 is complete. The contract is already signed.", "info");
+                                return;
+                              }
+                              if (selectedContract.contractStatus.code !== "ISSUED") {
+                                showNotice(
+                                  "Issue Contract First",
+                                  "Step 1 is issuing the contract. Sign it after issuing and saving the payment plan.",
+                                  "error"
+                                );
+                                return;
+                              }
+                              if (!selectedContract.commercialSummary?.hasCompletePaymentPlan) {
+                                showNotice(
+                                  "Payment Plan Required",
+                                  "Step 2 is saving the payment plan. Complete the stages below (total 100%) and click Save Payment Plan, then sign.",
+                                  "error"
+                                );
+                                return;
+                              }
+                              signMutation.mutate(selectedContract.id);
+                            }}
                             type="button"
                           >
-                            {signMutation.isPending ? "Signing..." : "Sign Contract"}
+                            {signMutation.isPending ? "Signing..." : "3. Sign Contract"}
                           </button>
                           <button
                             className="crm-secondary-button crm-opportunity-action-button"
@@ -760,70 +878,171 @@ export function ContractsPage() {
 
                       <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onPaymentPlanSubmit}>
                         <div className="crm-opportunity-action-card-header">
-                          <h4>Payment Plan</h4>
-                          <p className="crm-muted-text">Define milestone schedule before ERP handoff preparation.</p>
+                          <h4>Step 2 · Payment Plan {selectedContract.commercialSummary?.hasCompletePaymentPlan ? "(Saved)" : "(Pending)"}</h4>
+                          <p className="crm-muted-text">
+                            Reservation is Stage 1. Configure the remaining balance stages and save before signing (Step 3).
+                          </p>
                         </div>
                         <div className="crm-opportunity-action-card-fields">
+                          <dl className="crm-detail-grid">
+                            <div>
+                              <dt>SPA / Unit Value</dt>
+                              <dd>{formatInBase(selectedContract.commercialSummary?.contractValue ?? 0, selectedContract.currencyCode)}</dd>
+                            </div>
+                            <div>
+                              <dt>Stage 1 · Reservation</dt>
+                              <dd>{formatInBase(selectedContract.commercialSummary?.reservationAmount ?? 0, selectedContract.currencyCode)}</dd>
+                            </div>
+                            <div>
+                              <dt>Balance to Schedule</dt>
+                              <dd>{formatInBase(selectedContract.commercialSummary?.balanceAmount ?? 0, selectedContract.currencyCode)}</dd>
+                            </div>
+                            <div>
+                              <dt>Taxes / Fees (outside CRM)</dt>
+                              <dd>
+                                {formatInBase(
+                                  selectedContract.commercialSummary?.totalTaxAmount ?? 0,
+                                  selectedContract.commercialSummary?.baseCurrencyCode ?? null
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Total Payable incl. Taxes</dt>
+                              <dd>
+                                {formatInBase(
+                                  selectedContract.commercialSummary?.totalPayableBase ?? 0,
+                                  selectedContract.commercialSummary?.baseCurrencyCode ?? null
+                                )}
+                              </dd>
+                            </div>
+                          </dl>
+
+                          <section className="crm-activity-list">
+                            <h4>Configured Kenya Taxes and Fees</h4>
+                            {(selectedContract.commercialSummary?.taxLines ?? []).map((tax) => (
+                              <article key={tax.id}>
+                                <strong>{tax.taxName}</strong>
+                                <span>
+                                  {tax.calculationType === "PERCENT"
+                                    ? `${tax.ratePercent ?? 0}% of SPA`
+                                    : "Fixed fee"}{" "}
+                                  · {formatInBase(tax.taxAmount, tax.currencyCode)}
+                                </span>
+                                <p>Paid outside CRM; included in the payment-plan summary.</p>
+                              </article>
+                            ))}
+                          </section>
+
                           <label className="crm-field">
                             <span className="crm-label">Plan Name</span>
                             <input className="crm-input" {...paymentPlanForm.register("planName")} />
                           </label>
-                          <div className="crm-two-col">
-                            <label className="crm-field">
-                              <span className="crm-label">Line 1 Label</span>
-                              <input className="crm-input" {...paymentPlanForm.register("line1Label")} />
-                            </label>
-                            <label className="crm-field">
-                              <span className="crm-label">Line 1 Amount</span>
-                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line1Amount")} />
-                            </label>
+
+                          {paymentStageFields.fields.map((field, index) => {
+                            const percentage = pickNumber(watchedPaymentStages?.[index]?.percentage ?? "") ?? 0;
+                            const calculatedAmount =
+                              ((selectedContract.commercialSummary?.balanceAmount ?? 0) * percentage) / 100;
+                            return (
+                              <section className="crm-opportunity-action-card-fields" key={field.id}>
+                                <div className="crm-two-col">
+                                  <label className="crm-field">
+                                    <span className="crm-label">Stage {index + 2}</span>
+                                    <select
+                                      className="crm-input"
+                                      {...paymentPlanForm.register(`stages.${index}.milestoneRefId`)}
+                                    >
+                                      <option value="">Select payment stage</option>
+                                      {(paymentStagesQuery.data ?? []).map((stage) => (
+                                        <option key={stage.id} value={stage.id}>
+                                          {stage.level2Name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                  <label className="crm-field">
+                                    <span className="crm-label">Percentage of Balance</span>
+                                    <input
+                                      className="crm-input"
+                                      inputMode="decimal"
+                                      {...paymentPlanForm.register(`stages.${index}.percentage`)}
+                                    />
+                                  </label>
+                                </div>
+                                <div className="crm-two-col">
+                                  <label className="crm-field">
+                                    <span className="crm-label">Due Date</span>
+                                    <Controller
+                                      control={paymentPlanForm.control}
+                                      name={`stages.${index}.dueDate`}
+                                      render={({ field: dateField }) => (
+                                        <DateField
+                                          onBlur={dateField.onBlur}
+                                          onChange={dateField.onChange}
+                                          ref={dateField.ref}
+                                          value={dateField.value}
+                                        />
+                                      )}
+                                    />
+                                  </label>
+                                  <label className="crm-field">
+                                    <span className="crm-label">Calculated Amount</span>
+                                    <input className="crm-input" readOnly value={formatInBase(calculatedAmount, selectedContract.currencyCode)} />
+                                  </label>
+                                </div>
+                                <div className="crm-opportunity-action-card-footer">
+                                  <button
+                                    className="crm-secondary-button crm-opportunity-action-button"
+                                    disabled={paymentStageFields.fields.length === 1}
+                                    onClick={() => paymentStageFields.remove(index)}
+                                    type="button"
+                                  >
+                                    Remove Stage
+                                  </button>
+                                </div>
+                              </section>
+                            );
+                          })}
+
+                          <div className="crm-opportunity-action-card-footer">
+                            <button
+                              className="crm-secondary-button crm-opportunity-action-button"
+                              onClick={() =>
+                                paymentStageFields.append({
+                                  milestoneRefId: "",
+                                  milestoneLabel: "",
+                                  dueDate: "",
+                                  percentage: ""
+                                })
+                              }
+                              type="button"
+                            >
+                              Add Payment Stage
+                            </button>
+                            <strong>Total: {paymentPercentageTotal.toFixed(2)}%</strong>
                           </div>
-                          <div className="crm-two-col">
-                            <label className="crm-field">
-                              <span className="crm-label">Line 1 Due Date</span>
-                              <Controller
-                                control={paymentPlanForm.control}
-                                name="line1DueDate"
-                                render={({ field }) => (
-                                  <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
-                                )}
-                              />
-                            </label>
-                            <label className="crm-field">
-                              <span className="crm-label">Line 1 Percent</span>
-                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line1Percent")} />
-                            </label>
-                          </div>
-                          <div className="crm-two-col">
-                            <label className="crm-field">
-                              <span className="crm-label">Line 2 Label</span>
-                              <input className="crm-input" {...paymentPlanForm.register("line2Label")} />
-                            </label>
-                            <label className="crm-field">
-                              <span className="crm-label">Line 2 Amount</span>
-                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line2Amount")} />
-                            </label>
-                          </div>
-                          <div className="crm-two-col">
-                            <label className="crm-field">
-                              <span className="crm-label">Line 2 Due Date</span>
-                              <Controller
-                                control={paymentPlanForm.control}
-                                name="line2DueDate"
-                                render={({ field }) => (
-                                  <DateField onBlur={field.onBlur} onChange={field.onChange} ref={field.ref} value={field.value} />
-                                )}
-                              />
-                            </label>
-                            <label className="crm-field">
-                              <span className="crm-label">Line 2 Percent</span>
-                              <input className="crm-input" inputMode="decimal" {...paymentPlanForm.register("line2Percent")} />
-                            </label>
-                          </div>
+
+                          <label className="crm-field">
+                            <span className="crm-label">
+                              {selectedContract.contractStatus.code === "SIGNED" ? "Change Notes (required)" : "Plan Notes"}
+                            </span>
+                            <textarea
+                              className="crm-input crm-textarea"
+                              placeholder="Explain payment-plan changes, especially after signing"
+                              {...paymentPlanForm.register("remarks")}
+                            />
+                          </label>
                         </div>
                         <div className="crm-opportunity-action-card-footer">
-                          <button className="crm-primary-button crm-opportunity-action-button" disabled={paymentPlanMutation.isPending} type="submit">
-                            {paymentPlanMutation.isPending ? "Saving..." : "Save Payment Plan"}
+                          <button
+                            className="crm-primary-button crm-opportunity-action-button"
+                            disabled={paymentPlanMutation.isPending}
+                            type="submit"
+                          >
+                            {paymentPlanMutation.isPending
+                              ? "Saving..."
+                              : activePaymentPlan
+                                ? "2. Update Payment Plan"
+                                : "2. Save Payment Plan"}
                           </button>
                         </div>
                       </form>
@@ -901,12 +1120,20 @@ export function ContractsPage() {
                       {(selectedContract.paymentPlans ?? []).map((plan) => (
                         <article key={plan.id}>
                           <strong>{plan.planName}</strong>
-                          <span>{plan.planCode}</span>
+                          <span>{plan.planCode} · {plan.isActive ? "Current" : "Replaced"}</span>
                           {plan.lines.map((line) => (
                             <p key={line.id}>
-                              {line.sequenceNo}. {line.milestoneLabel ?? "Milestone"} - {formatInBase(line.amount, plan.currencyCode)}
+                              {line.sequenceNo}. {line.milestoneLabel ?? "Milestone"} · {line.percentageOfContract ?? 0}% ·{" "}
+                              {formatInBase(line.amount, plan.currencyCode)}
+                              {line.dueDate ? ` · Due ${line.dueDate}` : ""}
                             </p>
                           ))}
+                          {plan.taxLines.map((tax) => (
+                            <p key={tax.id}>
+                              Tax/Fee · {tax.taxName} · {formatInBase(tax.taxAmount, tax.currencyCode)} · Outside CRM
+                            </p>
+                          ))}
+                          {plan.remarks ? <p>Notes: {plan.remarks}</p> : null}
                         </article>
                       ))}
                       {(selectedContract.paymentPlans ?? []).length === 0 ? (
@@ -934,6 +1161,15 @@ export function ContractsPage() {
           </section>
         </div>
       ) : null}
+
+      <FormNoticeDialog
+        confirmLabel="OK"
+        message={noticeDialog.message}
+        onClose={closeNotice}
+        open={noticeDialog.open}
+        title={noticeDialog.title}
+        variant={noticeDialog.variant}
+      />
     </div>
   );
 }

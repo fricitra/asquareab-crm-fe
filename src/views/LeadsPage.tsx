@@ -817,7 +817,8 @@ export function LeadsPage() {
       setLeadDetailModalOpen(true);
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
-      showNotice("Lead Created", `Lead ${lead.leadNo} was created successfully.`, "success");
+      const leadName = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.contactName || "Lead";
+      showNotice("Lead Created", `${leadName} was created successfully.`, "success");
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be created. Check required fields and reference values.");
@@ -836,7 +837,8 @@ export function LeadsPage() {
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
-      showNotice("Lead Updated", `Lead ${lead.leadNo} was updated successfully.`, "success");
+      const leadName = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.contactName || "Lead";
+      showNotice("Lead Updated", `${leadName} was updated successfully.`, "success");
     },
     onError: (error) => {
       const message = getApiErrorMessage(error, "Lead could not be updated.");
@@ -851,7 +853,8 @@ export function LeadsPage() {
       queryClient.setQueryData(["lead", lead.id], lead);
       void queryClient.invalidateQueries({ queryKey: ["leads"] });
       void queryClient.invalidateQueries({ queryKey: ["lead", lead.id] });
-      showNotice("Lead Qualified", `Lead ${lead.leadNo} was qualified successfully.`, "success");
+      const leadName = [lead.firstName, lead.lastName].filter(Boolean).join(" ") || lead.contactName || "Lead";
+      showNotice("Lead Qualified", `${leadName} was qualified successfully.`, "success");
     },
     onError: (error, variables) => {
       const code = axios.isAxiosError(error) ? (error.response?.data as { code?: string } | undefined)?.code : undefined;
@@ -924,7 +927,13 @@ export function LeadsPage() {
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
       closeLeadDetailModal();
       navigate(`/opportunities?selected=${opportunity.id}`, {
-        state: { convertNotice: opportunity.opportunityNo }
+        state: {
+          convertedLeadName:
+            [selectedLead?.firstName, selectedLead?.lastName].filter(Boolean).join(" ") ||
+            selectedLead?.contactName ||
+            opportunity.customer.name ||
+            "Lead"
+        }
       });
     },
     onError: (error) => {

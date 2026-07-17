@@ -52,7 +52,7 @@ export function FormNoticeDialog({
           })}
         </div>
         <div className="crm-notice-actions">
-          <button className="crm-primary-button crm-fit-button" onClick={onClose} type="button">
+          <button autoFocus className="crm-primary-button crm-fit-button" onClick={onClose} type="button">
             {confirmLabel}
           </button>
         </div>
