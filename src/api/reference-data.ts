@@ -80,6 +80,37 @@ export async function getReferenceFamily(category: string, level1: string) {
   return response.data.items;
 }
 
+export type GeographyCityOption = {
+  id: string;
+  name: string;
+  adminCode: string | null;
+};
+
+export type GeographyCountryOption = {
+  code: string;
+  name: string;
+  nativeName: string;
+};
+
+export async function getGeographyCountries() {
+  const response = await apiClient.get<{ items: GeographyCountryOption[] }>("/reference-data/geography/countries");
+  return response.data.items;
+}
+
+export async function getCitiesByCountry(countryCode: string, search?: string) {
+  const response = await apiClient.get<{ items: GeographyCityOption[]; attribution: string }>(
+    "/reference-data/geography/cities",
+    {
+      params: {
+        countryCode,
+        search: search?.trim() || undefined,
+        limit: 250
+      }
+    }
+  );
+  return response.data;
+}
+
 export async function getReferenceDataMetadata() {
   const response = await apiClient.get<ReferenceDataMetadata>("/reference-data/metadata");
   return response.data;

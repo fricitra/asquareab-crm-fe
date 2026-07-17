@@ -775,6 +775,11 @@ textarea {
   font-size: 0.92rem;
 }
 
+.crm-input.is-invalid {
+  border-color: #f2b0a7;
+  background: #fff1ef;
+}
+
 .crm-empty-cell {
   color: #5f758b;
   text-align: center;

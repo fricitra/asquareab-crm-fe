@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import {
@@ -13,7 +13,7 @@ import {
   type Broker,
   type Customer
 } from "../api/customers";
-import { getReferenceFamily } from "../api/reference-data";
+import { getCitiesByCountry, getGeographyCountries, getReferenceFamily } from "../api/reference-data";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
 import { useModalEscape } from "../hooks/useModalEscape";
@@ -30,6 +30,7 @@ type CustomerFormValues = {
   whatsappNo: string;
   email: string;
   city: string;
+  nationalityCode: string;
   countryCode: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
@@ -73,6 +74,7 @@ function customerPayload(values: CustomerFormValues) {
     whatsappNo: pickString(values.whatsappNo),
     email: pickString(values.email),
     city: pickString(values.city),
+    nationalityCode: pickString(values.nationalityCode),
     countryCode: pickString(values.countryCode),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
@@ -109,6 +111,7 @@ const blankCustomer: CustomerFormValues = {
   whatsappNo: "",
   email: "",
   city: "",
+  nationalityCode: "",
   countryCode: "KE",
   buyerTypeRefId: "",
   fundingSourceRefId: "",
@@ -203,6 +206,27 @@ export function CustomersPage() {
     queryFn: () => getReferenceFamily("PERSON", "PREFERRED_COMMUNICATION"),
     staleTime: 60_000
   });
+  const countriesQuery = useQuery({
+    queryKey: ["geography", "countries"],
+    queryFn: getGeographyCountries,
+    staleTime: 30 * 60 * 1000
+  });
+  const customerCountryCode = customerForm.watch("countryCode");
+  const brokerCountryCode = brokerForm.watch("countryCode");
+  const customerCitySearch = useDeferredValue(customerForm.watch("city"));
+  const brokerCitySearch = useDeferredValue(brokerForm.watch("city"));
+  const customerCitiesQuery = useQuery({
+    queryKey: ["geography", "cities", customerCountryCode, customerCitySearch],
+    queryFn: () => getCitiesByCountry(customerCountryCode, customerCitySearch),
+    enabled: Boolean(customerCountryCode),
+    staleTime: 30 * 60 * 1000
+  });
+  const brokerCitiesQuery = useQuery({
+    queryKey: ["geography", "cities", brokerCountryCode, brokerCitySearch],
+    queryFn: () => getCitiesByCountry(brokerCountryCode, brokerCitySearch),
+    enabled: Boolean(brokerCountryCode),
+    staleTime: 30 * 60 * 1000
+  });
 
   const customers = customersQuery.data?.items ?? [];
   const brokers = brokersQuery.data?.items ?? [];
@@ -276,6 +300,7 @@ export function CustomersPage() {
       whatsappNo: customer.whatsappNo ?? "",
       email: customer.email ?? "",
       city: customer.city ?? "",
+      nationalityCode: customer.nationalityCode ?? "",
       countryCode: customer.countryCode ?? "KE",
       buyerTypeRefId: customer.buyerType.id ?? "",
       fundingSourceRefId: customer.fundingSource.id ?? "",
@@ -496,14 +521,37 @@ export function CustomersPage() {
             </div>
             <div className="crm-two-col">
               <label className="crm-field">
-                <span className="crm-label">City</span>
-                <input className="crm-input" {...customerForm.register("city")} />
+                <span className="crm-label">Nationality / Citizenship Country</span>
+                <select className="crm-input" {...customerForm.register("nationalityCode")}>
+                  <option value="">Select nationality</option>
+                  {(countriesQuery.data ?? []).map((country) => (
+                    <option key={country.code} value={country.code}>{country.name}</option>
+                  ))}
+                </select>
               </label>
               <label className="crm-field">
                 <span className="crm-label">Country</span>
-                <input className="crm-input" {...customerForm.register("countryCode")} />
+                <select
+                  className="crm-input"
+                  {...customerForm.register("countryCode", {
+                    onChange: () => customerForm.setValue("city", "")
+                  })}
+                >
+                  <option value="">Select country</option>
+                  {(countriesQuery.data ?? []).map((country) => (
+                    <option key={country.code} value={country.code}>{country.name}</option>
+                  ))}
+                </select>
               </label>
             </div>
+            <label className="crm-field">
+              <span className="crm-label">City</span>
+              <input className="crm-input" disabled={!customerCountryCode} list="customer-city-options" {...customerForm.register("city")} />
+              <datalist id="customer-city-options">
+                {(customerCitiesQuery.data?.items ?? []).map((city) => <option key={city.id} value={city.name} />)}
+              </datalist>
+              <small className="crm-muted-text">City data © GeoNames (CC BY 4.0)</small>
+            </label>
             <div className="crm-two-col">
               <label className="crm-field">
                 <span className="crm-label">Preferred Communication</span>
@@ -640,14 +688,32 @@ export function CustomersPage() {
             </div>
             <div className="crm-two-col">
               <label className="crm-field">
-                <span className="crm-label">City</span>
-                <input className="crm-input" {...brokerForm.register("city")} />
+                <span className="crm-label">Country</span>
+                <select
+                  className="crm-input"
+                  {...brokerForm.register("countryCode", {
+                    onChange: () => brokerForm.setValue("city", "")
+                  })}
+                >
+                  <option value="">Select country</option>
+                  {(countriesQuery.data ?? []).map((country) => (
+                    <option key={country.code} value={country.code}>{country.name}</option>
+                  ))}
+                </select>
               </label>
               <label className="crm-field">
-                <span className="crm-label">Commission Plan</span>
-                <input className="crm-input" {...brokerForm.register("commissionPlanCode")} />
+                <span className="crm-label">City</span>
+                <input className="crm-input" disabled={!brokerCountryCode} list="broker-city-options" {...brokerForm.register("city")} />
+                <datalist id="broker-city-options">
+                  {(brokerCitiesQuery.data?.items ?? []).map((city) => <option key={city.id} value={city.name} />)}
+                </datalist>
               </label>
             </div>
+            <label className="crm-field">
+              <span className="crm-label">Commission Plan</span>
+              <input className="crm-input" {...brokerForm.register("commissionPlanCode")} />
+            </label>
+            <small className="crm-muted-text">City data © GeoNames (CC BY 4.0)</small>
             <label className="crm-field">
               <span className="crm-label">Preferred Communication</span>
               <select className="crm-input" {...brokerForm.register("preferredCommunicationRefId")}>

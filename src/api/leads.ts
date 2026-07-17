@@ -109,10 +109,10 @@ export type CreateLeadPayload = {
   leadRatingRefId?: string;
   genderRefId?: string;
   dateOfBirth?: string;
-  nationalityRefId?: string;
-  countryRefId?: string;
+  nationalityCode?: string;
+  countryCode?: string;
   city?: string;
-  currentResidenceCountryRefId?: string;
+  currentResidenceCountryCode?: string;
   buyerTypeRefId?: string;
   fundingSourceRefId?: string;
   purposeOfPurchaseRefId?: string;
@@ -166,10 +166,10 @@ export type QualifyLeadPayload = {
   leadRatingRefId?: string;
   genderRefId?: string;
   dateOfBirth?: string;
-  nationalityRefId?: string;
-  countryRefId?: string;
+  nationalityCode?: string;
+  countryCode?: string;
   city?: string;
-  currentResidenceCountryRefId?: string;
+  currentResidenceCountryCode?: string;
   buyerTypeRefId?: string;
   fundingSourceRefId?: string;
   purposeOfPurchaseRefId?: string;

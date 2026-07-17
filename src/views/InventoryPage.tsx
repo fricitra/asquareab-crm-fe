@@ -419,6 +419,9 @@ export function InventoryPage() {
   const [projectPage, setProjectPage] = useState(1);
   const [unitPage, setUnitPage] = useState(1);
   const [productPage, setProductPage] = useState(1);
+  const [availabilityPage, setAvailabilityPage] = useState(1);
+  // null = not yet initialized (defaults to AVAILABLE once statuses load); "" = all statuses
+  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<string | null>(null);
   const [unitModalOpen, setUnitModalOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -562,11 +565,24 @@ export function InventoryPage() {
     queryFn: () => listUnitProducts({ limit: 100, offset: 0 }),
     staleTime: 30_000
   });
+  const availabilityQuery = useQuery({
+    queryKey: ["inventory", "availability", search, availabilityPage, availabilityStatusFilter],
+    queryFn: () =>
+      listUnits({
+        search: search || undefined,
+        availabilityStatusRefId: availabilityStatusFilter || undefined,
+        limit: pageSize,
+        offset: (availabilityPage - 1) * pageSize
+      }),
+    enabled: availabilityStatusFilter !== null,
+    staleTime: 10_000
+  });
 
   useEffect(() => {
     setProjectPage(1);
     setUnitPage(1);
     setProductPage(1);
+    setAvailabilityPage(1);
   }, [search]);
   const selectedProjectQuery = useQuery({ queryKey: ["inventory", "project", selectedProjectId], queryFn: () => getProject(selectedProjectId ?? ""), enabled: Boolean(selectedProjectId) });
   const selectedUnitQuery = useQuery({ queryKey: ["inventory", "unit", selectedUnitId], queryFn: () => getUnit(selectedUnitId ?? ""), enabled: Boolean(selectedUnitId) });
@@ -596,10 +612,20 @@ export function InventoryPage() {
   const productRows = productsQuery.data?.items ?? [];
   const productOptions = allProductsQuery.data?.items ?? [];
   const unitPagination = unitsQuery.data?.pagination ?? { limit: pageSize, offset: 0, total: 0 };
+  const availabilityRows = availabilityQuery.data?.items ?? [];
+  const availabilityPagination = availabilityQuery.data?.pagination ?? { limit: pageSize, offset: 0, total: 0 };
+  const availabilityStatuses = availabilityStatusesQuery.data ?? [];
   const currencyRows = currenciesQuery.data?.items ?? [];
   const selectedProject = selectedProjectQuery.data;
   const selectedUnit = selectedUnitQuery.data;
   const activeUnitDetailTab = unitDetailTabs.find((tab) => tab.id === unitDetailTab) ?? unitDetailTabs[0];
+
+  // Default the Availability tab to the AVAILABLE status once reference data loads
+  useEffect(() => {
+    if (availabilityStatusFilter !== null || availabilityStatuses.length === 0) return;
+    const availableStatus = availabilityStatuses.find((item) => item.level2Code === "AVAILABLE");
+    setAvailabilityStatusFilter(availableStatus?.id ?? "");
+  }, [availabilityStatusFilter, availabilityStatuses]);
 
   const stats = useMemo(() => {
     const unitSummary = unitsQuery.data?.summary;
@@ -1273,11 +1299,82 @@ export function InventoryPage() {
         </section>
       ) : null}
 
-      {activeTab === "units" || activeTab === "availability" ? (
+      {activeTab === "availability" ? (
         <section className="crm-unit-workspace">
           <section className="crm-panel crm-unit-register-panel">
             <div className="crm-panel-header">
-              <h3>{activeTab === "units" ? "Unit Register" : "Availability Register"}</h3>
+              <div>
+                <h3>Availability Register</h3>
+                <p className="crm-muted-text">Filtered stock view by availability status. Manage unit details from the Units tab.</p>
+              </div>
+              <div className="crm-unit-register-actions">
+                <select
+                  className="crm-input"
+                  onChange={(event) => {
+                    setAvailabilityStatusFilter(event.target.value);
+                    setAvailabilityPage(1);
+                  }}
+                  value={availabilityStatusFilter ?? ""}
+                >
+                  <option value="">All statuses</option>
+                  {availabilityStatuses.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.level2Name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="crm-input crm-search-input"
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setAvailabilityPage(1);
+                  }}
+                  placeholder="Search unit or project"
+                  value={search}
+                />
+              </div>
+            </div>
+            <div className="crm-table-wrap">
+              <table className="crm-table">
+                <thead><tr><th>Unit</th><th>Project</th><th>Type</th><th>Block / Floor</th><th>Area</th><th>Price</th><th>Status</th></tr></thead>
+                <tbody>
+                  {availabilityRows.map((unit) => (
+                    <tr key={unit.id}>
+                      <td><strong>{unit.unitCode}</strong><span>{unit.unitName ?? "Unit"}</span></td>
+                      <td><strong>{unit.project.projectCode}</strong><span>{unit.project.name ?? "-"}</span></td>
+                      <td>{unit.unitType.name ?? "-"}</td>
+                      <td>{unit.blockCode ?? "-"} / {unit.floorNo ?? "-"}</td>
+                      <td>{area(unit.netArea)}</td>
+                      <td>{formatInBase(unit.basePrice, unit.currencyCode)}</td>
+                      <td><span className={`crm-status-pill crm-status-${unit.availabilityStatus.code?.toLowerCase() ?? "default"}`}>{unit.availabilityStatus.name ?? unit.status}</span></td>
+                    </tr>
+                  ))}
+                  {availabilityRows.length === 0 ? (
+                    <tr>
+                      <td className="crm-empty-cell" colSpan={7}>
+                        {availabilityQuery.isLoading ? "Loading availability..." : "No units found for this status."}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <ListPagination
+              page={availabilityPage}
+              pageSize={pageSize}
+              total={availabilityPagination.total}
+              itemLabel="units"
+              onPageChange={setAvailabilityPage}
+            />
+          </section>
+        </section>
+      ) : null}
+
+      {activeTab === "units" ? (
+        <section className="crm-unit-workspace">
+          <section className="crm-panel crm-unit-register-panel">
+            <div className="crm-panel-header">
+              <h3>Unit Register</h3>
               <div className="crm-unit-register-actions">
                 <input
                   className="crm-input crm-search-input"
@@ -1288,11 +1385,9 @@ export function InventoryPage() {
                   placeholder="Search unit, project, status"
                   value={search}
                 />
-                {activeTab === "units" ? (
-                  <button className="crm-primary-button" onClick={resetUnitForm} type="button">
-                    New Unit
-                  </button>
-                ) : null}
+                <button className="crm-primary-button" onClick={resetUnitForm} type="button">
+                  New Unit
+                </button>
               </div>
             </div>
             <div className="crm-table-wrap">

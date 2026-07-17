@@ -324,13 +324,17 @@ export async function listProjects(params?: ListQueryParams) {
   return response.data;
 }
 
-export async function listUnits(params?: ListQueryParams) {
+export async function listUnits(params?: ListQueryParams & { availabilityStatusRefId?: string }) {
+  const query: Record<string, string | number> = { ...(buildListQueryParams(params) ?? {}) };
+  if (params?.availabilityStatusRefId) {
+    query.availabilityStatusRefId = params.availabilityStatusRefId;
+  }
   const response = await apiClient.get<{
     items: Unit[];
     pagination: { limit: number; offset: number; total: number };
     summary?: { available: number; reserved: number; value: number };
   }>("/inventory/units", {
-    params: buildListQueryParams(params)
+    params: Object.keys(query).length ? query : undefined
   });
   return response.data;
 }

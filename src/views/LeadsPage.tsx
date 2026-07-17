@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
@@ -20,7 +20,7 @@ import {
   type QualifyLeadPayload
 } from "../api/leads";
 import { convertLeadToOpportunity } from "../api/opportunities";
-import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
+import { getCitiesByCountry, getGeographyCountries, getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 import { DEFAULT_LIST_PAGE_SIZE, getRowSerialNumber } from "../lib/list-pagination";
 import { getApiErrorMessage } from "../lib/format-api-error";
 import axios from "axios";
@@ -28,8 +28,14 @@ import { useModalEscape } from "../hooks/useModalEscape";
 import {
   buildLeadValidationMessage,
   getFirstInvalidLeadField,
+  isValidEmailAddress,
+  isValidPhoneNumber,
+  normalizeEmailAddress,
+  normalizePhoneNumber,
   todayIsoDate,
   validateMandatoryLeadFields,
+  EMAIL_VALIDATION_MESSAGE,
+  PHONE_VALIDATION_MESSAGE,
   type LeadFormFieldName
 } from "../lib/lead-form-validation";
 import { ListPagination } from "../shared/ListPagination";
@@ -70,10 +76,10 @@ type LeadFormValues = {
   leadRatingRefId: string;
   genderRefId: string;
   dateOfBirth: string;
-  nationalityRefId: string;
-  countryRefId: string;
+  nationalityCode: string;
+  countryCode: string;
   city: string;
-  currentResidenceCountryRefId: string;
+  currentResidenceCountryCode: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
   purposeOfPurchaseRefId: string;
@@ -102,10 +108,10 @@ type QualifyFormValues = {
   leadRatingRefId: string;
   genderRefId: string;
   dateOfBirth: string;
-  nationalityRefId: string;
-  countryRefId: string;
+  nationalityCode: string;
+  countryCode: string;
   city: string;
-  currentResidenceCountryRefId: string;
+  currentResidenceCountryCode: string;
   buyerTypeRefId: string;
   fundingSourceRefId: string;
   purposeOfPurchaseRefId: string;
@@ -141,9 +147,9 @@ function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
   return {
     firstName: pickString(values.firstName),
     lastName: pickString(values.lastName),
-    mobileNo: pickString(values.mobileNo),
-    whatsappNo: pickString(values.whatsappNo),
-    email: pickString(values.email),
+    mobileNo: pickString(normalizePhoneNumber(values.mobileNo)),
+    whatsappNo: pickString(normalizePhoneNumber(values.whatsappNo)),
+    email: pickString(normalizeEmailAddress(values.email)),
     leadSourceRefId: pickString(values.leadSourceRefId),
     captureChannelRefId: pickString(values.captureChannelRefId),
     campaignId: pickString(values.campaignId),
@@ -153,10 +159,10 @@ function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
     leadRatingRefId: pickString(values.leadRatingRefId),
     genderRefId: pickString(values.genderRefId),
     dateOfBirth: pickString(values.dateOfBirth),
-    nationalityRefId: pickString(values.nationalityRefId),
-    countryRefId: pickString(values.countryRefId),
+    nationalityCode: pickString(values.nationalityCode),
+    countryCode: pickString(values.countryCode),
     city: pickString(values.city),
-    currentResidenceCountryRefId: pickString(values.currentResidenceCountryRefId),
+    currentResidenceCountryCode: pickString(values.currentResidenceCountryCode),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
     purposeOfPurchaseRefId: pickString(values.purposeOfPurchaseRefId),
@@ -187,10 +193,10 @@ function toQualifyPayload(values: QualifyFormValues): QualifyLeadPayload {
     leadRatingRefId: pickString(values.leadRatingRefId),
     genderRefId: pickString(values.genderRefId),
     dateOfBirth: pickString(values.dateOfBirth),
-    nationalityRefId: pickString(values.nationalityRefId),
-    countryRefId: pickString(values.countryRefId),
+    nationalityCode: pickString(values.nationalityCode),
+    countryCode: pickString(values.countryCode),
     city: pickString(values.city),
-    currentResidenceCountryRefId: pickString(values.currentResidenceCountryRefId),
+    currentResidenceCountryCode: pickString(values.currentResidenceCountryCode),
     buyerTypeRefId: pickString(values.buyerTypeRefId),
     fundingSourceRefId: pickString(values.fundingSourceRefId),
     purposeOfPurchaseRefId: pickString(values.purposeOfPurchaseRefId),
@@ -382,10 +388,10 @@ const blankLeadForm: LeadFormValues = {
   leadRatingRefId: "",
   genderRefId: "",
   dateOfBirth: "",
-  nationalityRefId: "",
-  countryRefId: "",
+  nationalityCode: "",
+  countryCode: "",
   city: "",
-  currentResidenceCountryRefId: "",
+  currentResidenceCountryCode: "",
   buyerTypeRefId: "",
   fundingSourceRefId: "",
   purposeOfPurchaseRefId: "",
@@ -569,16 +575,26 @@ export function LeadsPage() {
     queryFn: () => getReferenceFamily("PERSON", "GENDER"),
     ...referenceQueryDefaults
   });
-  const nationalitiesQuery = useQuery({
-    queryKey: ["reference", "ORGANIZATION", "NATIONALITY"],
-    queryFn: () => getReferenceFamily("ORGANIZATION", "NATIONALITY"),
-    ...referenceQueryDefaults
-  });
   const countriesQuery = useQuery({
-    queryKey: ["reference", "ORGANIZATION", "COUNTRY"],
-    queryFn: () => getReferenceFamily("ORGANIZATION", "COUNTRY"),
+    queryKey: ["geography", "countries"],
+    queryFn: getGeographyCountries,
     ...referenceQueryDefaults
   });
+  const countryOptions = useMemo<ReferenceDataItem[]>(
+    () =>
+      (countriesQuery.data ?? []).map((country, index) => ({
+        id: country.code,
+        referenceCategory: "GEOGRAPHY",
+        level1Code: "COUNTRY",
+        level1Name: "Country",
+        level2Code: country.code,
+        level2Name: country.name,
+        sortOrder: index,
+        status: "ACTIVE",
+        isActive: true
+      })),
+    [countriesQuery.data]
+  );
   const buyerTypesQuery = useQuery({
     queryKey: ["reference", "CUSTOMER", "BUYER_TYPE"],
     queryFn: () => getReferenceFamily("CUSTOMER", "BUYER_TYPE"),
@@ -682,8 +698,10 @@ export function LeadsPage() {
   });
 
   const createForm = useForm<LeadFormValues>({
-    defaultValues: { ...blankLeadForm, preferredCurrencyCode: baseCurrency }
+    defaultValues: { ...blankLeadForm, preferredCurrencyCode: baseCurrency },
+    mode: "onTouched"
   });
+  const createFormErrors = createForm.formState.errors;
 
   const closeNotice = () => {
     setNoticeDialog((current) => ({ ...current, open: false }));
@@ -694,6 +712,18 @@ export function LeadsPage() {
       window.setTimeout(() => {
         createForm.setFocus(fieldName);
       }, 0);
+    }
+  };
+
+  const handleContactFieldBlur = (
+    fieldName: LeadFormFieldName,
+    value: string,
+    isValidValue: (value: string) => boolean,
+    message: string
+  ) => {
+    if (value.trim() !== "" && !isValidValue(value)) {
+      pendingFocusFieldRef.current = fieldName;
+      showNotice("Invalid Entry", message, "error");
     }
   };
 
@@ -719,10 +749,10 @@ export function LeadsPage() {
       leadRatingRefId: "",
       genderRefId: "",
       dateOfBirth: "",
-      nationalityRefId: "",
-      countryRefId: "",
+      nationalityCode: "",
+      countryCode: "",
       city: "",
-      currentResidenceCountryRefId: "",
+      currentResidenceCountryCode: "",
       buyerTypeRefId: "",
       fundingSourceRefId: "",
       purchaseTimelineRefId: "",
@@ -738,6 +768,45 @@ export function LeadsPage() {
       qualificationNotes: ""
     }
   });
+
+  const selectedResidenceCountryCode = createForm.watch("currentResidenceCountryCode");
+  const deferredCitySearch = useDeferredValue(createForm.watch("city"));
+  const residenceCitiesQuery = useQuery({
+    queryKey: ["geography", "cities", selectedResidenceCountryCode, deferredCitySearch],
+    queryFn: () => getCitiesByCountry(selectedResidenceCountryCode, deferredCitySearch),
+    enabled: Boolean(selectedResidenceCountryCode),
+    staleTime: 30 * 60 * 1000
+  });
+  const residenceCityOptions = residenceCitiesQuery.data?.items ?? [];
+  const previousResidenceRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (previousResidenceRef.current !== null && previousResidenceRef.current !== selectedResidenceCountryCode) {
+      createForm.setValue("city", "");
+    }
+    previousResidenceRef.current = selectedResidenceCountryCode;
+  }, [createForm, selectedResidenceCountryCode]);
+
+  const selectedQualifyResidenceCountryCode = qualifyForm.watch("currentResidenceCountryCode");
+  const deferredQualifyCitySearch = useDeferredValue(qualifyForm.watch("city"));
+  const qualifyCitiesQuery = useQuery({
+    queryKey: ["geography", "cities", selectedQualifyResidenceCountryCode, deferredQualifyCitySearch],
+    queryFn: () => getCitiesByCountry(selectedQualifyResidenceCountryCode, deferredQualifyCitySearch),
+    enabled: Boolean(selectedQualifyResidenceCountryCode),
+    staleTime: 30 * 60 * 1000
+  });
+  const qualifyCityOptions = qualifyCitiesQuery.data?.items ?? [];
+  const previousQualifyResidenceRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      previousQualifyResidenceRef.current !== null &&
+      previousQualifyResidenceRef.current !== selectedQualifyResidenceCountryCode
+    ) {
+      qualifyForm.setValue("city", "");
+    }
+    previousQualifyResidenceRef.current = selectedQualifyResidenceCountryCode;
+  }, [qualifyForm, selectedQualifyResidenceCountryCode]);
 
   const createMutation = useMutation({
     mutationFn: createLead,
@@ -888,11 +957,13 @@ export function LeadsPage() {
   const closeLeadCreateModal = () => {
     setLeadCreateModalOpen(false);
     setEditingLeadId(null);
+    previousResidenceRef.current = "";
     createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
   };
 
   const openCreateLeadModal = () => {
     setEditingLeadId(null);
+    previousResidenceRef.current = "";
     createForm.reset({
       ...blankLeadForm,
       preferredCurrencyCode: baseCurrency,
@@ -932,6 +1003,7 @@ export function LeadsPage() {
     setEditingLeadId(lead.id);
     setSelectedLeadId(lead.id);
     previousLeadSourceRef.current = lead.leadSource.id ?? "";
+    previousResidenceRef.current = lead.currentResidenceCountry.code ?? "";
     createForm.reset({
       firstName: lead.firstName ?? lead.leadTitle ?? "",
       lastName: lead.lastName ?? lead.contactName ?? "",
@@ -947,10 +1019,10 @@ export function LeadsPage() {
       leadRatingRefId: lead.leadRating.id ?? "",
       genderRefId: lead.gender.id ?? "",
       dateOfBirth: lead.dateOfBirth?.slice(0, 10) ?? "",
-      nationalityRefId: lead.nationality.id ?? "",
-      countryRefId: lead.country.id ?? "",
+      nationalityCode: lead.nationality.code ?? "",
+      countryCode: lead.country.code ?? "",
       city: lead.city ?? "",
-      currentResidenceCountryRefId: lead.currentResidenceCountry.id ?? "",
+      currentResidenceCountryCode: lead.currentResidenceCountry.code ?? "",
       buyerTypeRefId: lead.buyerType.id ?? "",
       fundingSourceRefId: lead.fundingSource.id ?? "",
       purposeOfPurchaseRefId: lead.purposeOfPurchase.id ?? "",
@@ -982,14 +1054,15 @@ export function LeadsPage() {
       return;
     }
 
+    previousQualifyResidenceRef.current = selectedLead.currentResidenceCountry.code ?? "";
     qualifyForm.reset({
       leadRatingRefId: selectedLead.leadRating.id ?? "",
       genderRefId: selectedLead.gender.id ?? "",
       dateOfBirth: selectedLead.dateOfBirth?.slice(0, 10) ?? "",
-      nationalityRefId: selectedLead.nationality.id ?? "",
-      countryRefId: selectedLead.country.id ?? "",
+      nationalityCode: selectedLead.nationality.code ?? "",
+      countryCode: selectedLead.country.code ?? "",
       city: selectedLead.city ?? "",
-      currentResidenceCountryRefId: selectedLead.currentResidenceCountry.id ?? "",
+      currentResidenceCountryCode: selectedLead.currentResidenceCountry.code ?? "",
       buyerTypeRefId: selectedLead.buyerType.id ?? "",
       fundingSourceRefId: selectedLead.fundingSource.id ?? "",
       purposeOfPurchaseRefId: selectedLead.purposeOfPurchase.id ?? "",
@@ -1042,8 +1115,8 @@ export function LeadsPage() {
       const duplicate = await checkLeadDuplicate({
         firstName: values.firstName.trim(),
         lastName: values.lastName.trim(),
-        mobileNo: values.mobileNo.trim(),
-        email: values.email.trim(),
+        mobileNo: normalizePhoneNumber(values.mobileNo),
+        email: normalizeEmailAddress(values.email),
         excludeLeadId: editingLeadId ?? undefined
       });
 
@@ -1242,15 +1315,46 @@ export function LeadsPage() {
                   </label>
                   <label className="crm-field">
                     <FieldLabel required>Mobile</FieldLabel>
-                    <input className="crm-input" {...createForm.register("mobileNo")} />
+                    <input
+                      autoComplete="tel"
+                      className={`crm-input${createFormErrors.mobileNo ? " is-invalid" : ""}`}
+                      inputMode="tel"
+                      placeholder="+254 712 345 678"
+                      type="tel"
+                      {...createForm.register("mobileNo", {
+                        validate: (value) => value.trim() === "" || isValidPhoneNumber(value) || PHONE_VALIDATION_MESSAGE,
+                        onBlur: (event: ReactFocusEvent<HTMLInputElement>) =>
+                          handleContactFieldBlur("mobileNo", event.target.value, isValidPhoneNumber, PHONE_VALIDATION_MESSAGE)
+                      })}
+                    />
                   </label>
                   <label className="crm-field">
                     <FieldLabel required>Email</FieldLabel>
-                    <input className="crm-input" type="email" {...createForm.register("email")} />
+                    <input
+                      autoComplete="email"
+                      className={`crm-input${createFormErrors.email ? " is-invalid" : ""}`}
+                      type="email"
+                      {...createForm.register("email", {
+                        validate: (value) => value.trim() === "" || isValidEmailAddress(value) || EMAIL_VALIDATION_MESSAGE,
+                        onBlur: (event: ReactFocusEvent<HTMLInputElement>) =>
+                          handleContactFieldBlur("email", event.target.value, isValidEmailAddress, EMAIL_VALIDATION_MESSAGE)
+                      })}
+                    />
                   </label>
                   <label className="crm-field">
                     <FieldLabel>WhatsApp</FieldLabel>
-                    <input className="crm-input" {...createForm.register("whatsappNo")} />
+                    <input
+                      autoComplete="tel"
+                      className={`crm-input${createFormErrors.whatsappNo ? " is-invalid" : ""}`}
+                      inputMode="tel"
+                      placeholder="+254 712 345 678"
+                      type="tel"
+                      {...createForm.register("whatsappNo", {
+                        validate: (value) => value.trim() === "" || isValidPhoneNumber(value) || PHONE_VALIDATION_MESSAGE,
+                        onBlur: (event: ReactFocusEvent<HTMLInputElement>) =>
+                          handleContactFieldBlur("whatsappNo", event.target.value, isValidPhoneNumber, PHONE_VALIDATION_MESSAGE)
+                      })}
+                    />
                   </label>
                   <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={createForm.register} />
 
@@ -1310,12 +1414,12 @@ export function LeadsPage() {
                   </label>
 
                   <FormSectionTitle>Profile & Preferences</FormSectionTitle>
-                  <SelectField label="Nationality" name="nationalityRefId" options={nationalitiesQuery.data ?? []} register={createForm.register} required />
-                  <SelectField label="Country" name="countryRefId" options={countriesQuery.data ?? []} register={createForm.register} required />
+                  <SelectField label="Nationality / Citizenship Country" name="nationalityCode" options={countryOptions} register={createForm.register} required />
+                  <SelectField label="Country" name="countryCode" options={countryOptions} register={createForm.register} required />
                   <SelectField
                     label="Current Residence"
-                    name="currentResidenceCountryRefId"
-                    options={countriesQuery.data ?? []}
+                    name="currentResidenceCountryCode"
+                    options={countryOptions}
                     register={createForm.register}
                   />
                   <label className="crm-field">
@@ -1330,7 +1434,21 @@ export function LeadsPage() {
                   </label>
                   <label className="crm-field">
                     <FieldLabel>City</FieldLabel>
-                    <input className="crm-input" {...createForm.register("city")} />
+                    <input
+                      className="crm-input"
+                      disabled={!selectedResidenceCountryCode}
+                      list="lead-residence-city-options"
+                      placeholder={selectedResidenceCountryCode ? "Type or select city" : "Select current residence first"}
+                      {...createForm.register("city")}
+                    />
+                    <datalist id="lead-residence-city-options">
+                      {residenceCityOptions.map((city) => (
+                        <option key={city.id} value={city.name}>
+                          {city.adminCode ?? ""}
+                        </option>
+                      ))}
+                    </datalist>
+                    <small className="crm-muted-text">City data © GeoNames (CC BY 4.0)</small>
                   </label>
                   <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={createForm.register} />
@@ -1508,12 +1626,12 @@ export function LeadsPage() {
                         ) : null}
                         <SelectField label="Rating" name="leadRatingRefId" options={leadRatingsQuery.data ?? []} register={qualifyForm.register} />
                         <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={qualifyForm.register} />
-                        <SelectField label="Nationality" name="nationalityRefId" options={nationalitiesQuery.data ?? []} register={qualifyForm.register} />
-                        <SelectField label="Country" name="countryRefId" options={countriesQuery.data ?? []} register={qualifyForm.register} />
+                        <SelectField label="Nationality / Citizenship Country" name="nationalityCode" options={countryOptions} register={qualifyForm.register} />
+                        <SelectField label="Country" name="countryCode" options={countryOptions} register={qualifyForm.register} />
                         <SelectField
                           label="Current Residence"
-                          name="currentResidenceCountryRefId"
-                          options={countriesQuery.data ?? []}
+                          name="currentResidenceCountryCode"
+                          options={countryOptions}
                           register={qualifyForm.register}
                         />
                         <SelectField label="Buyer Type" name="buyerTypeRefId" options={buyerTypesQuery.data ?? []} register={qualifyForm.register} />
@@ -1573,7 +1691,21 @@ export function LeadsPage() {
                         </label>
                         <label className="crm-field">
                           <span className="crm-label">City</span>
-                          <input className="crm-input" {...qualifyForm.register("city")} />
+                          <input
+                            className="crm-input"
+                            disabled={!selectedQualifyResidenceCountryCode}
+                            list="qualify-residence-city-options"
+                            placeholder={selectedQualifyResidenceCountryCode ? "Type or select city" : "Select current residence first"}
+                            {...qualifyForm.register("city")}
+                          />
+                          <datalist id="qualify-residence-city-options">
+                            {qualifyCityOptions.map((city) => (
+                              <option key={city.id} value={city.name}>
+                                {city.adminCode ?? ""}
+                              </option>
+                            ))}
+                          </datalist>
+                          <small className="crm-muted-text">City data © GeoNames (CC BY 4.0)</small>
                         </label>
                         <div className="crm-two-col">
                           <label className="crm-field">

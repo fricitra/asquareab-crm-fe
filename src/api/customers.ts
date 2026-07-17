@@ -18,6 +18,7 @@ export type Customer = {
   whatsappNo: string | null;
   email: string | null;
   city: string | null;
+  nationalityCode: string | null;
   countryCode: string | null;
   buyerType: NamedLink;
   fundingSource: NamedLink;
@@ -62,6 +63,7 @@ export type CustomerPayload = {
   whatsappNo?: string;
   email?: string;
   city?: string;
+  nationalityCode?: string;
   countryCode?: string;
   buyerTypeRefId?: string;
   fundingSourceRefId?: string;
