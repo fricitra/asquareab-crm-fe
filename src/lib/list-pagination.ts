@@ -14,6 +14,8 @@ export type ListQueryParams = {
   limit?: number;
   offset?: number;
   opportunityId?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 };
 
 export function buildListQueryParams(params?: ListQueryParams) {
@@ -34,6 +36,12 @@ export function buildListQueryParams(params?: ListQueryParams) {
   }
   if (params.opportunityId) {
     query.opportunityId = params.opportunityId;
+  }
+  if (params.sortBy?.trim()) {
+    query.sortBy = params.sortBy.trim();
+  }
+  if (params.sortDir) {
+    query.sortDir = params.sortDir;
   }
 
   return Object.keys(query).length ? query : undefined;

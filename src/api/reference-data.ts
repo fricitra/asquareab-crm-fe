@@ -13,6 +13,7 @@ export type ReferenceDataItem = {
   sortOrder: number;
   status: string;
   isActive: boolean;
+  createdAt?: string | null;
   remarks?: string | null;
 };
 
@@ -61,6 +62,8 @@ export async function listReferenceData(params?: {
   page?: number;
   pageSize?: number;
   activeOnly?: boolean;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 }) {
   const response = await apiClient.get<{ items: ReferenceDataItem[]; pagination: ReferenceDataPagination }>("/reference-data", {
     params: {
@@ -69,7 +72,9 @@ export async function listReferenceData(params?: {
       search: params?.search || undefined,
       page: params?.page,
       pageSize: params?.pageSize,
-      activeOnly: params?.activeOnly === undefined ? undefined : String(params.activeOnly)
+      activeOnly: params?.activeOnly === undefined ? undefined : String(params.activeOnly),
+      sortBy: params?.sortBy,
+      sortDir: params?.sortDir
     }
   });
   return response.data;

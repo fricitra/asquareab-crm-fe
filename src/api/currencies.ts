@@ -124,6 +124,8 @@ export async function listCurrencies(filters?: {
   activeOnly?: boolean;
   limit?: number;
   offset?: number;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 }) {
   const response = await apiClient.get<{
     items: Currency[];
@@ -179,6 +181,8 @@ export async function listExchangeRates(filters?: {
   activeOnly?: boolean;
   limit?: number;
   offset?: number;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 }) {
   const response = await apiClient.get<{
     items: ExchangeRate[];

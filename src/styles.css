@@ -887,6 +887,58 @@ textarea {
   text-transform: uppercase;
 }
 
+.crm-sortable-th {
+  padding: 0;
+}
+
+.crm-sortable-th-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.crm-sortable-th-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.crm-sortable-th.is-sorted .crm-sortable-th-button {
+  font-weight: 700;
+  color: inherit;
+}
+
+.crm-sortable-th-indicator {
+  font-size: 0.7rem;
+  opacity: 0.55;
+  line-height: 1;
+  color: inherit;
+}
+
+.crm-sortable-th.is-sorted .crm-sortable-th-indicator {
+  opacity: 1;
+}
+
+.crm-reference-shell .crm-sortable-th.is-sorted {
+  background: #1f4468;
+}
+
+.crm-reference-shell .crm-sortable-th-button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
 .crm-table tr {
   cursor: pointer;
 }
@@ -897,7 +949,7 @@ textarea {
 }
 
 .crm-table td span,
-.crm-detail-title span,
+.crm-detail-title > div > span,
 .crm-muted-text {
   display: block;
   color: #5f758b;
@@ -1696,11 +1748,27 @@ textarea {
   }
 }
 
-.crm-dashboard-targets-header-actions {
+.crm-modal-header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+
+.crm-dashboard-currency-badge.is-compact {
+  gap: 6px;
+  padding: 4px 8px;
+  min-height: 28px;
+}
+
+.crm-dashboard-currency-badge.is-compact .crm-currency-badge-icon {
+  width: 22px;
+  height: 22px;
+  font-size: 0.7rem;
+}
+
+.crm-dashboard-currency-badge.is-compact .crm-currency-badge-code {
+  font-size: 0.78rem;
 }
 
 .crm-dashboard-kpi-heading {
@@ -2619,6 +2687,38 @@ textarea {
 .crm-detail-title strong {
   display: block;
   font-size: 1.1rem;
+}
+
+.crm-detail-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crm-detail-facts li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 110px;
+}
+
+.crm-detail-fact-label {
+  display: block;
+  color: #7a8fa3;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.crm-detail-fact-value {
+  display: block;
+  color: #24384d;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .crm-status-pill {
@@ -3578,6 +3678,14 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.crm-workflow-compact {
+  padding-bottom: 4px;
+}
+
+.crm-workflow-compact .crm-workflow-step {
+  cursor: default;
+}
+
 .crm-two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -4182,52 +4290,57 @@ textarea {
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(1),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(1) {
-  width: 5%;
+  width: 4%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(2),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(2) {
-  width: 13%;
+  width: 12%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(3),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(3) {
-  width: 15%;
+  width: 13%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(4),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(4) {
-  width: 11%;
+  width: 9%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(5),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(5) {
-  width: 8%;
+  width: 7%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(6),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(6) {
-  width: 8%;
+  width: 7%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(7),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(7) {
-  width: 6%;
+  width: 5%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(8),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(8) {
-  width: 14%;
+  width: 11%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(9),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(9) {
-  width: 14%;
+  width: 11%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table th:nth-child(10),
 .crm-reference-shell .crm-leads-inbox-table td:nth-child(10) {
-  width: 6%;
+  width: 11%;
+}
+
+.crm-reference-shell .crm-leads-inbox-table th:nth-child(11),
+.crm-reference-shell .crm-leads-inbox-table td:nth-child(11) {
+  width: 5%;
 }
 
 .crm-reference-shell .crm-leads-inbox-table td {
@@ -4300,9 +4413,17 @@ textarea {
 }
 
 .crm-reference-shell .crm-table td span,
-.crm-reference-shell .crm-detail-title span,
+.crm-reference-shell .crm-detail-title > div > span,
 .crm-reference-shell .crm-muted-text {
   color: #52677b;
+}
+
+.crm-reference-shell .crm-detail-fact-label {
+  color: #7a8fa3;
+}
+
+.crm-reference-shell .crm-detail-fact-value {
+  color: #24384d;
 }
 
 .crm-reference-shell .crm-dashboard-record-list {

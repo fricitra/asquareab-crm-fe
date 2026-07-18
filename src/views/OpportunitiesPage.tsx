@@ -14,11 +14,12 @@ import {
   type OpportunityDetail
 } from "../api/opportunities";
 import { getReferenceFamily } from "../api/reference-data";
-import { getUnit, listUnits, type Unit } from "../api/inventory";
+import { listUnits } from "../api/inventory";
 import { createReservation, listReservations, type Reservation } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
 import { getApiErrorMessage } from "../lib/format-api-error";
+import { resolveUnitReservationPricingInBase } from "../lib/reservation-pricing";
 import { getContractAgreedPack } from "../api/agreed-pack";
 import { listContracts } from "../api/contracts";
 import { useModalEscape } from "../hooks/useModalEscape";
@@ -28,9 +29,11 @@ import { DateField } from "../shared/DateField";
 import { DateTimeField } from "../shared/DateTimeField";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 import { UnitPickerDialog } from "../shared/UnitPickerDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 
 type StageFormValues = {
   opportunityStageRefId: string;
@@ -100,23 +103,6 @@ function defaultReservationExpiryDate() {
   return expiry.toISOString().slice(0, 10);
 }
 
-async function resolveUnitReservationPricing(unit: Unit) {
-  try {
-    const detail = await getUnit(unit.id);
-    const sales = detail.catalogue?.salesInformation;
-    const amount = sales?.reservationAmount ?? sales?.approvedSellingPrice ?? detail.basePrice ?? unit.basePrice;
-    return {
-      amount: amount == null ? "" : String(amount),
-      currencyCode: detail.currencyCode ?? unit.currencyCode ?? ""
-    };
-  } catch {
-    return {
-      amount: unit.basePrice == null ? "" : String(unit.basePrice),
-      currencyCode: unit.currencyCode ?? ""
-    };
-  }
-}
-
 type NoticeState = {
   open: boolean;
   title: string;
@@ -158,7 +144,9 @@ function opportunityWorkflowSteps(
   );
   const isLost = opportunity.status === "LOST" || opportunity.opportunityStage.name === "Lost" || Boolean(opportunity.lostReason.id);
   const hasActiveReservation = Boolean(
-    activeReservation?.isActive && activeReservation.reservationStatus.code !== "CANCELLED"
+    activeReservation?.isActive &&
+    activeReservation.reservationStatus.code !== "CANCELLED" &&
+    activeReservation.reservationStatus.code !== "SUPERSEDED"
   );
 
   const buildForwardStageStep = (stageName: (typeof opportunityForwardStages)[number], forwardIndex: number): WorkflowStep => {
@@ -179,17 +167,21 @@ function opportunityWorkflowSteps(
         history?.remarks ??
         (isCurrent
           ? stageName === "Qualified" || stageName === "Open"
-            ? "Schedule an in-person or virtual site visit to continue. Manual move to Site Visit is not used."
+            ? "Schedule an in-person or virtual site visit to continue."
             : stageName === "Site Visit"
-              ? "Complete the site visit with outcome notes before moving to Negotiation."
+              ? "Complete the site visit with outcome notes to advance to Negotiation."
+              : stageName === "Negotiation"
+                ? "Capture negotiation notes to advance automatically to Reservation Ready."
             : stageName === "Reservation Ready" && !hasActiveReservation
-            ? "Select an available unit and create the reservation from the action below."
+            ? "Add notes, then create the reservation from the action below."
             : opportunity.remarks
           : forwardIndex === currentForwardIndex + 1
             ? stageName === "Site Visit"
               ? "Schedule a site visit (in-person or virtual) to enter this stage."
               : stageName === "Negotiation"
-                ? "Complete at least one site visit, then move to Negotiation."
+                ? "Completes automatically after a site visit is marked Completed."
+              : stageName === "Reservation Ready"
+                ? "Capture negotiation notes to enter this stage."
               : "This is the next suggested workflow stage."
             : null),
       details: [
@@ -279,7 +271,8 @@ function suggestedProbability(stageName: string | null) {
 }
 
 export function OpportunitiesPage() {
-  const { formatInBase } = useMoneyFormatter();
+  const { formatInBase, baseCurrency, toBase, defaultContractCurrency } = useMoneyFormatter();
+  const reservationDealCurrency = defaultContractCurrency || baseCurrency;
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -287,6 +280,7 @@ export function OpportunitiesPage() {
   const processedHandoffRef = useRef<string | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [listSort, setListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
   const [opportunityDetailModalOpen, setOpportunityDetailModalOpen] = useState(false);
@@ -324,12 +318,14 @@ export function OpportunitiesPage() {
   });
 
   const opportunitiesQuery = useQuery({
-    queryKey: ["opportunities", search, page],
+    queryKey: ["opportunities", search, page, listSort.sortBy, listSort.sortDir],
     queryFn: () =>
       listOpportunities({
         search: search || undefined,
         limit: pageSize,
-        offset: (page - 1) * pageSize
+        offset: (page - 1) * pageSize,
+        sortBy: listSort.sortBy,
+        sortDir: listSort.sortDir
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
@@ -338,7 +334,13 @@ export function OpportunitiesPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, listSort.sortBy, listSort.sortDir]);
+
+  const onSortColumn = (column: string) => {
+    const preferDesc =
+      column === "probability" || column === "budget" || column === "createdAt" || column === "opportunityNo";
+    setListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
 
   useEffect(() => {
     const selectedId = searchParams.get("selected");
@@ -481,6 +483,15 @@ export function OpportunitiesPage() {
         return;
       }
 
+      if (stageName === "Reservation Ready") {
+        showNotice(
+          "Negotiation Complete",
+          "Negotiation notes saved. Opportunity is now Reservation Ready — create the reservation next.",
+          "success"
+        );
+        return;
+      }
+
       showNotice("Stage Updated", `Opportunity moved to ${stageName}.`, "success");
     },
     onError: (error) => {
@@ -556,7 +567,7 @@ export function OpportunitiesPage() {
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
       showNotice(
         "Site Visit Completed",
-        "Visit outcome was saved. You can now move to Negotiation.",
+        "Visit outcome saved. Opportunity advanced to Negotiation — add negotiation notes to continue.",
         "success"
       );
     },
@@ -600,7 +611,10 @@ export function OpportunitiesPage() {
   const opportunityRows = opportunitiesQuery.data?.items ?? [];
   const activeOpportunityReservation =
     (opportunityReservationsQuery.data?.items ?? []).find(
-      (reservation) => reservation.isActive && reservation.reservationStatus.code !== "CANCELLED"
+      (reservation) =>
+        reservation.isActive &&
+        reservation.reservationStatus.code !== "CANCELLED" &&
+        reservation.reservationStatus.code !== "SUPERSEDED"
     ) ?? null;
   const hasActiveOpportunityReservation = Boolean(activeOpportunityReservation);
   const isSelectedOpportunityLost =
@@ -626,6 +640,7 @@ export function OpportunitiesPage() {
     selectedOpportunity?.opportunityStage.name === "Site Visit" &&
     !hasCompletedSiteVisit;
   const nextStage = (stagesQuery.data ?? []).find((stage) => stage.level2Name === nextStageName);
+  const reservationReadyStage = (stagesQuery.data ?? []).find((stage) => stage.level2Name === "Reservation Ready");
   const lostStage = (stagesQuery.data ?? []).find((stage) => stage.level2Name === "Lost");
 
   useEffect(() => {
@@ -713,18 +728,6 @@ export function OpportunitiesPage() {
     disabled: noticeDialog.open || reservationUnitPickerOpen
   });
 
-  const onStageSubmit = stageForm.handleSubmit((values) => {
-    if (!selectedOpportunityId || !values.opportunityStageRefId) return;
-    stageMutation.mutate({
-      id: selectedOpportunityId,
-      payload: {
-        opportunityStageRefId: values.opportunityStageRefId,
-        probabilityPercent: pickNumber(values.probabilityPercent),
-        remarks: pickString(values.remarks)
-      }
-    });
-  });
-
   const onNoteSubmit = noteForm.handleSubmit((values) => {
     if (!selectedOpportunityId || !values.noteText.trim()) return;
     noteMutation.mutate({ id: selectedOpportunityId, noteText: values.noteText });
@@ -779,17 +782,22 @@ export function OpportunitiesPage() {
     });
   });
 
-  const openReservationModal = () => {
+  const openReservationModal = (prefillRemarks?: string) => {
     if (!selectedOpportunity) return;
+
+    const budgetAmount = selectedOpportunity.budgetAmount;
+    const budgetCurrency = selectedOpportunity.currencyCode;
+    const amountInBase =
+      budgetAmount == null ? "" : String(toBase(budgetAmount, budgetCurrency || reservationDealCurrency));
 
     reservationForm.reset({
       opportunityId: selectedOpportunity.id,
       unitId: "",
       unitCode: selectedOpportunity.proposedUnitCode ?? "",
-      reservationAmount: selectedOpportunity.budgetAmount?.toString() ?? "",
-      currencyCode: selectedOpportunity.currencyCode ?? "",
+      reservationAmount: amountInBase,
+      currencyCode: reservationDealCurrency,
       expiryDate: defaultReservationExpiryDate(),
-      remarks: ""
+      remarks: prefillRemarks?.trim() ?? ""
     });
     setReservationModalOpen(true);
   };
@@ -814,7 +822,14 @@ export function OpportunitiesPage() {
 
     reservationForm.setValue("unitId", proposedUnit.id);
     reservationForm.setValue("unitCode", proposedUnit.unitCode);
-  }, [reservationForm, reservationModalOpen, reservationUnitsQuery.data, selectedOpportunity]);
+    void resolveUnitReservationPricingInBase(proposedUnit, {
+      baseCurrency: reservationDealCurrency,
+      toBase
+    }).then((pricing) => {
+      reservationForm.setValue("reservationAmount", pricing.amount);
+      reservationForm.setValue("currencyCode", pricing.currencyCode);
+    });
+  }, [reservationForm, reservationModalOpen, reservationUnitsQuery.data, selectedOpportunity, reservationDealCurrency, toBase]);
 
   const onReservationSubmit = reservationForm.handleSubmit((values) => {
     if (!values.unitId) {
@@ -872,12 +887,31 @@ export function OpportunitiesPage() {
           <table className="crm-table">
             <thead>
               <tr>
-                <th>Opportunity</th>
-                <th>Customer</th>
-                <th>Stage</th>
-                <th>Probability</th>
-                <th>Budget</th>
-                <th>Project</th>
+                <SortableTh
+                  column="opportunityNo"
+                  label="Opportunity"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
+                <SortableTh column="customer" label="Customer" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="stage" label="Stage" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh
+                  column="probability"
+                  label="Probability"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
+                <SortableTh column="budget" label="Budget" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="project" label="Project" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh
+                  column="createdAt"
+                  label="Created Date"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
               </tr>
             </thead>
             <tbody>
@@ -896,11 +930,12 @@ export function OpportunitiesPage() {
                   <td>{opportunity.probabilityPercent ?? "-"}%</td>
                   <td>{formatInBase(opportunity.budgetAmount, opportunity.currencyCode)}</td>
                   <td>{opportunity.projectCode ?? "-"}</td>
+                  <td>{formatDate(opportunity.createdAt)}</td>
                 </tr>
               ))}
               {opportunityRows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={6}>
+                  <td className="crm-empty-cell" colSpan={7}>
                     No opportunities found.
                   </td>
                 </tr>
@@ -933,9 +968,12 @@ export function OpportunitiesPage() {
                   </p>
                 ) : null}
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={closeOpportunityDetailModal} type="button">
-                Close
-              </button>
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
+                <button className="crm-secondary-button crm-fit-button" onClick={closeOpportunityDetailModal} type="button">
+                  Close
+                </button>
+              </div>
             </div>
 
             {opportunityDetailQuery.isLoading ? (
@@ -946,11 +984,42 @@ export function OpportunitiesPage() {
                   <div>
                     <strong>{selectedOpportunity.customer.name ?? selectedOpportunity.opportunityNo}</strong>
                     <span>{selectedOpportunity.opportunityNo}</span>
+                    <ul className="crm-detail-facts">
+                      <li>
+                        <span className="crm-detail-fact-label">Lead</span>
+                        <span className="crm-detail-fact-value">{selectedOpportunity.lead.leadNo ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Budget</span>
+                        <span className="crm-detail-fact-value">
+                          {formatInBase(selectedOpportunity.budgetAmount, selectedOpportunity.currencyCode)}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Project</span>
+                        <span className="crm-detail-fact-value">{selectedOpportunity.projectCode ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Unit</span>
+                        <span className="crm-detail-fact-value">{selectedOpportunity.proposedUnitCode ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Probability</span>
+                        <span className="crm-detail-fact-value">
+                          {selectedOpportunity.probabilityPercent == null ? "-" : `${selectedOpportunity.probabilityPercent}%`}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Expected Close</span>
+                        <span className="crm-detail-fact-value">{selectedOpportunity.expectedCloseDate ?? "-"}</span>
+                      </li>
+                    </ul>
                   </div>
                   <span className="crm-status-pill">{selectedOpportunity.opportunityStage.name ?? selectedOpportunity.status}</span>
                 </div>
                 <SalesPipelineStrip current="opportunity" />
                 <WorkflowTracker
+                  showDetail={false}
                   steps={opportunityWorkflowSteps(selectedOpportunity, formatInBase, activeOpportunityReservation)}
                 />
 
@@ -965,11 +1034,44 @@ export function OpportunitiesPage() {
                 ) : !isSelectedOpportunityLost && awaitsSiteVisitCompletion ? (
                   <ContinuePanel
                     nowLabel="Site Visit"
-                    nowSummary="A visit is scheduled. Capture outcome notes and mark it completed before negotiation."
+                    nowSummary="A visit is scheduled. Capture outcome notes and mark it completed."
                     nextLabel="Complete Site Visit"
-                    nextSummary="Save visit comments and status as Completed, then Move to Negotiation becomes available."
+                    nextSummary="Saves visit comments and advances this opportunity to Negotiation."
                     dataNeeded="Outcome notes for the selected visit."
                   />
+                ) : !isSelectedOpportunityLost && selectedOpportunity.opportunityStage.name === "Negotiation" && !hasActiveOpportunityReservation ? (
+                  <ContinuePanel
+                    nowLabel="Negotiation"
+                    nowSummary="Record commercial discussion outcome. Saving notes advances to Reservation Ready."
+                    nextLabel="Continue to Reservation Ready"
+                    nextSummary="Negotiation notes are required. The opportunity then moves to Reservation Ready."
+                    notesHint="Required — price discussion, buyer feedback, preferred unit, objections…"
+                    notesPlaceholder="Negotiation notes…"
+                    notesValue={actionNotes}
+                    onNotesChange={setActionNotes}
+                  >
+                    <button
+                      className="crm-primary-button crm-fit-button"
+                      disabled={stageMutation.isPending || !reservationReadyStage}
+                      onClick={() => {
+                        if (!selectedOpportunityId || !reservationReadyStage) return;
+                        const notes = requireActionNotes(null, "continuing to Reservation Ready");
+                        if (!notes) return;
+                        stageMutation.mutate({
+                          id: selectedOpportunityId,
+                          payload: {
+                            opportunityStageRefId: reservationReadyStage.id,
+                            probabilityPercent: pickNumber(suggestedProbability("Reservation Ready")),
+                            remarks: notes
+                          }
+                        });
+                        setActionNotes("");
+                      }}
+                      type="button"
+                    >
+                      {stageMutation.isPending ? "Saving..." : "Continue to Reservation Ready"}
+                    </button>
+                  </ContinuePanel>
                 ) : !isSelectedOpportunityLost && selectedOpportunity.opportunityStage.name === "Proposal" && hasActiveOpportunityReservation ? (
                   <ContinuePanel
                     nowLabel="Proposal stage"
@@ -1056,36 +1158,30 @@ export function OpportunitiesPage() {
                   ) : (
                     <ContinuePanel
                       nowLabel="Reservation Ready"
-                      nowSummary="Select an available unit and hold it for this buyer."
+                      nowSummary="Add a short note, then hold an available unit for this buyer."
                       nextLabel={MOVE_TO_CTA.reservation}
-                      nextSummary="Creates the reservation and blocks the unit."
-                      dataNeeded="Available unit, reservation amount, and expiry."
+                      nextSummary="Notes are required before creating the reservation."
+                      notesHint="Required — unit preference, hold reason, buyer confirmation…"
+                      notesPlaceholder="Reservation notes…"
+                      notesValue={actionNotes}
+                      onNotesChange={setActionNotes}
+                      dataNeeded="Notes, available unit, reservation amount, and expiry."
                     >
-                      <button className="crm-primary-button crm-fit-button" onClick={openReservationModal} type="button">
+                      <button
+                        className="crm-primary-button crm-fit-button"
+                        onClick={() => {
+                          const notes = requireActionNotes(null, MOVE_TO_CTA.reservation);
+                          if (!notes) return;
+                          openReservationModal(notes);
+                          setActionNotes("");
+                        }}
+                        type="button"
+                      >
                         {MOVE_TO_CTA.reservation}
                       </button>
                     </ContinuePanel>
                   )
                 ) : null}
-
-                <dl className="crm-detail-list">
-                  <div>
-                    <dt>Lead</dt>
-                    <dd>{selectedOpportunity.lead.leadNo ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Budget</dt>
-                    <dd>{formatInBase(selectedOpportunity.budgetAmount, selectedOpportunity.currencyCode)}</dd>
-                  </div>
-                  <div>
-                    <dt>Unit</dt>
-                    <dd>{selectedOpportunity.proposedUnitCode ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Expected Close</dt>
-                    <dd>{selectedOpportunity.expectedCloseDate ?? "-"}</dd>
-                  </div>
-                </dl>
 
                 <section className="crm-opportunity-actions">
                   <div className="crm-opportunity-actions-primary">
@@ -1185,7 +1281,7 @@ export function OpportunitiesPage() {
                         <div className="crm-opportunity-action-card-header">
                           <h4>1. Complete Site Visit</h4>
                           <p className="crm-muted-text">
-                            Record outcome notes and mark the visit Completed. Move to Negotiation unlocks after at least one completed visit.
+                            Record outcome notes and mark the visit Completed. The opportunity then advances to Negotiation.
                           </p>
                         </div>
                         <div className="crm-opportunity-action-card-fields">
@@ -1219,52 +1315,7 @@ export function OpportunitiesPage() {
                           </button>
                         </div>
                       </form>
-                    ) : selectedOpportunity.opportunityStage.name === "Proposal" && !isSelectedOpportunityLost && hasActiveOpportunityReservation ? null : selectedOpportunity.opportunityStage.name === "Reservation Ready" && !isSelectedOpportunityLost ? null : (
-                      <form className="crm-opportunity-action-card" onSubmit={onStageSubmit}>
-                        <div className="crm-opportunity-action-card-header">
-                          <h4>{nextStageName ? `1. Move to ${nextStageName}` : "Stage Complete"}</h4>
-                          <p className="crm-muted-text">
-                            Current: {selectedOpportunity.opportunityStage.name ?? "-"}
-                            {nextStageName ? ` · Next: ${nextStageName}` : ""}
-                          </p>
-                        </div>
-                        <div className="crm-opportunity-action-card-fields">
-                          <div className="crm-two-col">
-                            <label className="crm-field">
-                              <span className="crm-label">Current Stage</span>
-                              <input className="crm-input" disabled readOnly value={selectedOpportunity.opportunityStage.name ?? "-"} />
-                            </label>
-                            <label className="crm-field">
-                              <span className="crm-label">Next Stage</span>
-                              <input
-                                className="crm-input"
-                                disabled
-                                readOnly
-                                value={nextStage?.level2Name ?? nextStageName ?? "No further stage"}
-                              />
-                              <input type="hidden" {...stageForm.register("opportunityStageRefId")} />
-                            </label>
-                          </div>
-                          <label className="crm-field">
-                            <span className="crm-label">Probability</span>
-                            <input className="crm-input" inputMode="numeric" {...stageForm.register("probabilityPercent")} />
-                          </label>
-                          <label className="crm-field">
-                            <span className="crm-label">Remarks</span>
-                            <textarea className="crm-input crm-textarea crm-opportunity-textarea" {...stageForm.register("remarks")} />
-                          </label>
-                        </div>
-                        <div className="crm-opportunity-action-card-footer">
-                          <button
-                            className="crm-primary-button crm-opportunity-action-button"
-                            disabled={stageMutation.isPending || !nextStageName || isSelectedOpportunityLost}
-                            type="submit"
-                          >
-                            {stageMutation.isPending ? "Moving..." : nextStageName ? `Move to ${nextStageName}` : "Stage Complete"}
-                          </button>
-                        </div>
-                      </form>
-                    )}
+                    ) : null}
 
                     <form className="crm-opportunity-action-card" onSubmit={onNoteSubmit}>
                       <div className="crm-opportunity-action-card-header">
@@ -1566,12 +1617,12 @@ export function OpportunitiesPage() {
                     </div>
                   </label>
                   <label className="crm-field">
-                    <span className="crm-label">Amount</span>
+                    <span className="crm-label">Amount ({reservationDealCurrency})</span>
                     <input className="crm-input" inputMode="decimal" {...reservationForm.register("reservationAmount")} />
                   </label>
                   <label className="crm-field">
                     <span className="crm-label">Currency</span>
-                    <input className="crm-input" {...reservationForm.register("currencyCode")} />
+                    <input className="crm-input" readOnly {...reservationForm.register("currencyCode")} />
                   </label>
                   <label className="crm-field">
                     <span className="crm-label">Expiry</span>
@@ -1610,9 +1661,12 @@ export function OpportunitiesPage() {
                 <h3>Agreed Pack</h3>
                 <p className="crm-muted-text">{opportunityAgreedPackQuery.data?.agreement.contractNo ?? "Loading..."}</p>
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={() => setAgreedPackContractId(null)} type="button">
-                Close
-              </button>
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setAgreedPackContractId(null)} type="button">
+                  Close
+                </button>
+              </div>
             </div>
             {opportunityAgreedPackQuery.isLoading ? (
               <p className="crm-muted-text">Loading agreed pack...</p>
@@ -1639,12 +1693,12 @@ export function OpportunitiesPage() {
         onSelect={(unit) => {
           reservationForm.setValue("unitId", unit.id);
           reservationForm.setValue("unitCode", unit.unitCode);
-          void resolveUnitReservationPricing(unit).then((pricing) => {
+          void resolveUnitReservationPricingInBase(unit, {
+            baseCurrency: reservationDealCurrency,
+            toBase
+          }).then((pricing) => {
             reservationForm.setValue("reservationAmount", pricing.amount);
-            reservationForm.setValue(
-              "currencyCode",
-              pricing.currencyCode || selectedOpportunity?.currencyCode || ""
-            );
+            reservationForm.setValue("currencyCode", pricing.currencyCode);
           });
         }}
         open={reservationUnitPickerOpen}

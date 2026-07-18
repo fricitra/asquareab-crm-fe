@@ -43,9 +43,11 @@ import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { DateTimeField } from "../shared/DateTimeField";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
+import { SortableTh } from "../shared/SortableTh";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 import { useAuthStore } from "../store/auth-store";
 
 type NoticeState = {
@@ -465,6 +467,7 @@ export function LeadsPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [listSort, setListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
@@ -486,6 +489,10 @@ export function LeadsPage() {
   };
 
   const isLeadEditorOpen = leadCreateModalOpen || leadDetailModalOpen;
+
+  useEffect(() => {
+    setPage(1);
+  }, [listSort.sortBy, listSort.sortDir]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -630,17 +637,25 @@ export function LeadsPage() {
   });
 
   const leadsQuery = useQuery({
-    queryKey: ["leads", search, page],
+    queryKey: ["leads", search, page, listSort.sortBy, listSort.sortDir],
     queryFn: () =>
       listLeads({
         search: search || undefined,
         limit: pageSize,
-        offset: (page - 1) * pageSize
+        offset: (page - 1) * pageSize,
+        sortBy: listSort.sortBy,
+        sortDir: listSort.sortDir
       }),
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false
   });
+
+  const onSortColumn = (column: string) => {
+    const preferDesc =
+      column === "score" || column === "captured" || column === "createdAt" || column === "leadNo";
+    setListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
 
   const leadDetailQuery = useQuery({
     queryKey: ["lead", selectedLeadId],
@@ -1189,14 +1204,27 @@ export function LeadsPage() {
             <thead>
               <tr>
                 <th>S.No.</th>
-                <th>Lead No.</th>
-                <th>Contact</th>
-                <th>Source</th>
-                <th>Status</th>
-                <th>Rating</th>
-                <th>Score</th>
-                <th>Captured</th>
-                <th>Assigned</th>
+                <SortableTh
+                  column="leadNo"
+                  label="Lead No."
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
+                <SortableTh column="contact" label="Contact" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="source" label="Source" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="status" label="Status" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="rating" label="Rating" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="score" label="Score" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="captured" label="Captured" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh
+                  column="createdAt"
+                  label="Created Date"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
+                <SortableTh column="assigned" label="Assigned" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
                 <th>Act.</th>
               </tr>
             </thead>
@@ -1221,6 +1249,7 @@ export function LeadsPage() {
                   <td>{lead.leadRating.name ?? "-"}</td>
                   <td>{lead.scoreTotal ?? "-"}</td>
                   <td>{formatDate(lead.capturedAt)}</td>
+                  <td>{formatDate(lead.createdAt)}</td>
                   <td>{lead.assignedToUser.name ?? "Unassigned"}</td>
                   <td className="crm-leads-action-cell">
                     <button
@@ -1243,7 +1272,7 @@ export function LeadsPage() {
               ))}
               {leadRows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={10}>
+                  <td className="crm-empty-cell" colSpan={11}>
                     No leads found.
                   </td>
                 </tr>
@@ -1511,9 +1540,12 @@ export function LeadsPage() {
                   </p>
                 ) : null}
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={closeLeadDetailModal} type="button">
-                Close
-              </button>
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
+                <button className="crm-secondary-button crm-fit-button" onClick={closeLeadDetailModal} type="button">
+                  Close
+                </button>
+              </div>
             </div>
 
             {leadDetailQuery.isLoading ? (
@@ -1522,13 +1554,45 @@ export function LeadsPage() {
               <div className="crm-opportunity-detail-body">
                 <div className="crm-detail-title">
                   <div>
-                    <strong>{[selectedLead.firstName, selectedLead.lastName].filter(Boolean).join(" ") || selectedLead.contactName || selectedLead.leadNo}</strong>
+                    <strong>
+                      {[selectedLead.firstName, selectedLead.lastName].filter(Boolean).join(" ") ||
+                        selectedLead.contactName ||
+                        selectedLead.leadNo}
+                    </strong>
                     <span>{selectedLead.leadNo}</span>
+                    <ul className="crm-detail-facts">
+                      <li>
+                        <span className="crm-detail-fact-label">Phone</span>
+                        <span className="crm-detail-fact-value">{selectedLead.mobileNo ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Email</span>
+                        <span className="crm-detail-fact-value">{selectedLead.email ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Source</span>
+                        <span className="crm-detail-fact-value">{selectedLead.leadSource.name ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Budget</span>
+                        <span className="crm-detail-fact-value">
+                          {formatLeadBudget(selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Timeline</span>
+                        <span className="crm-detail-fact-value">{selectedLead.purchaseTimeline.name ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Assigned</span>
+                        <span className="crm-detail-fact-value">{selectedLead.assignedToUser.name ?? "Unassigned"}</span>
+                      </li>
+                    </ul>
                   </div>
                   <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
                 </div>
                 <SalesPipelineStrip current="lead" />
-                <WorkflowTracker steps={leadWorkflowSteps(selectedLead, formatLeadBudget)} />
+                <WorkflowTracker showDetail={false} steps={leadWorkflowSteps(selectedLead, formatLeadBudget)} />
                 {selectedLead.convertedAt ? (
                   <ContinuePanel
                     nowLabel="Lead complete"
@@ -1574,34 +1638,10 @@ export function LeadsPage() {
                     dataNeeded="Rating, buyer type, funding, timeline, and notes."
                   />
                 )}
-                <dl className="crm-detail-list">
-                  <div>
-                    <dt>Phone</dt>
-                    <dd>{selectedLead.mobileNo ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Email</dt>
-                    <dd>{selectedLead.email ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Budget</dt>
-                    <dd>{formatLeadBudget(selectedLead.budgetMax, selectedLead.preferredCurrencyCode)}</dd>
-                  </div>
-                  <div>
-                    <dt>Timeline</dt>
-                    <dd>{selectedLead.purchaseTimeline.name ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Assigned</dt>
-                    <dd>{selectedLead.assignedToUser.name ?? "Unassigned"}</dd>
-                  </div>
-                  <div>
-                    <dt>Qualified</dt>
-                    <dd>{formatDate(selectedLead.qualifiedAt)}</dd>
-                  </div>
-                </dl>
 
+                {!selectedLead.convertedAt ? (
                 <section className="crm-opportunity-actions">
+                  {!selectedLead.qualifiedAt ? (
                   <section className="crm-opportunity-action-card">
                     <div className="crm-opportunity-action-card-header">
                       <h4>Assign Lead</h4>
@@ -1633,6 +1673,7 @@ export function LeadsPage() {
                       </button>
                     </div>
                   </section>
+                  ) : null}
 
                   {!selectedLead.qualifiedAt ? (
                     <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onQualify}>
@@ -1793,17 +1834,9 @@ export function LeadsPage() {
                         </button>
                       </div>
                     </form>
-                  ) : (
-                    <section className="crm-opportunity-action-card">
-                      <div className="crm-opportunity-action-card-header">
-                        <h4>Qualification Completed</h4>
-                        <p className="crm-muted-text">
-                          Qualified by {selectedLead.qualifiedByUser.name ?? "CRM user"} on {formatDate(selectedLead.qualifiedAt)}.
-                        </p>
-                      </div>
-                    </section>
-                  )}
+                  ) : null}
                 </section>
+                ) : null}
               </div>
             ) : (
               <p className="crm-muted-text">Lead details could not be loaded.</p>

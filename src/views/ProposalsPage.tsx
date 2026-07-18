@@ -14,6 +14,7 @@ import {
   listProposals,
   rejectProposal,
   submitProposal,
+  supersedeProposal,
   type Proposal,
   type ProposalPricingContext
 } from "../api/proposals";
@@ -25,8 +26,10 @@ import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 
 type ProposalFormValues = {
   opportunityId: string;
@@ -370,10 +373,12 @@ export function ProposalsPage() {
   const { formatInBase, baseCurrency, ratesToBase, toBase, fromBase } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [listSort, setListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [proposalDetailModalOpen, setProposalDetailModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [supersedingProposalId, setSupersedingProposalId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [prefillSource, setPrefillSource] = useState<string | null>(null);
   const [pricingContext, setPricingContext] = useState<ProposalPricingContext | null>(null);
@@ -398,19 +403,27 @@ export function ProposalsPage() {
   });
 
   const proposalsQuery = useQuery({
-    queryKey: ["proposals", search, page],
+    queryKey: ["proposals", search, page, listSort.sortBy, listSort.sortDir],
     queryFn: () =>
       listProposals({
         search: search || undefined,
         limit: pageSize,
-        offset: (page - 1) * pageSize
+        offset: (page - 1) * pageSize,
+        sortBy: listSort.sortBy,
+        sortDir: listSort.sortDir
       }),
     staleTime: 10_000
   });
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, listSort.sortBy, listSort.sortDir]);
+
+  const onSortColumn = (column: string) => {
+    const preferDesc =
+      column === "proposed" || column === "discount" || column === "createdAt" || column === "proposalNo";
+    setListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
   const proposalDetailQuery = useQuery({
     queryKey: ["proposal", selectedProposalId],
     queryFn: () => getProposal(selectedProposalId ?? ""),
@@ -469,7 +482,10 @@ export function ProposalsPage() {
   const selectedUnit = (unitsQuery.data?.items ?? []).find((unit) => unit.id === selectedUnitId);
   const activeOpportunityReservation =
     (opportunityReservationPrefillQuery.data?.items ?? []).find(
-      (reservation) => reservation.isActive && reservation.reservationStatus.code !== "CANCELLED"
+      (reservation) =>
+        reservation.isActive &&
+        reservation.reservationStatus.code !== "CANCELLED" &&
+        reservation.reservationStatus.code !== "SUPERSEDED"
     ) ?? null;
   const activeProposalReservation =
     (proposalContractReservationQuery.data?.items ?? []).find(
@@ -493,7 +509,12 @@ export function ProposalsPage() {
   const proposalOpportunities = useMemo(() => {
     const reservedOpportunityIds = new Set(
       (reservedOpportunitiesQuery.data?.items ?? [])
-        .filter((reservation) => reservation.isActive && reservation.reservationStatus.code !== "CANCELLED")
+        .filter(
+          (reservation) =>
+            reservation.isActive &&
+            reservation.reservationStatus.code !== "CANCELLED" &&
+            reservation.reservationStatus.code !== "SUPERSEDED"
+        )
         .map((reservation) => reservation.opportunity.id)
         .filter((id): id is string => Boolean(id))
     );
@@ -527,6 +548,7 @@ export function ProposalsPage() {
   const selectedProposalIsClosed =
     selectedProposal?.proposalStatus.code === "ACCEPTED" ||
     selectedProposal?.proposalStatus.code === "CANCELLED" ||
+    selectedProposal?.proposalStatus.code === "SUPERSEDED" ||
     selectedProposal?.proposalStatus.code === "EXPIRED";
 
   const stats = useMemo(() => {
@@ -576,8 +598,8 @@ export function ProposalsPage() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (values: ProposalFormValues) =>
-      createProposal({
+    mutationFn: (values: ProposalFormValues) => {
+      const payload = {
         opportunityId: values.opportunityId,
         unitId: pickString(values.unitId),
         validUntil: pickString(values.validUntil),
@@ -592,9 +614,16 @@ export function ProposalsPage() {
           ? { ...pricingContext, equivalentCurrencyCode }
           : { equivalentCurrencyCode },
         remarks: pickString(values.remarks)
-      }),
+      };
+      if (supersedingProposalId) {
+        return supersedeProposal(supersedingProposalId, payload);
+      }
+      return createProposal(payload);
+    },
     onSuccess: (proposal) => {
+      const wasReplace = Boolean(supersedingProposalId);
       setCreateOpen(false);
+      setSupersedingProposalId(null);
       setPricingContext(null);
       proposalForm.reset({
         opportunityId: "",
@@ -607,9 +636,13 @@ export function ProposalsPage() {
         approvalThresholdPercent: "5",
         remarks: ""
       });
-      refreshProposal(proposal, "Proposal created.");
+      void queryClient.invalidateQueries({ queryKey: ["contracts"] });
+      refreshProposal(proposal, wasReplace ? "Proposal replaced. Prior proposal superseded." : "Proposal created.");
     },
-    onError: (error) => setMessage(getApiErrorMessage(error, "Proposal could not be created."))
+    onError: (error) =>
+      setMessage(
+        getApiErrorMessage(error, supersedingProposalId ? "Proposal could not be replaced." : "Proposal could not be created.")
+      )
   });
 
   const submitMutation = useMutation({
@@ -653,6 +686,7 @@ export function ProposalsPage() {
     handoffNoteRef.current = null;
     setPrefillSource(null);
     setPricingContext(null);
+    setSupersedingProposalId(null);
     setEquivalentCurrencyCode(
       equivalentCurrencyOptions.find((currency) => currency.currencyCode === "USD")?.currencyCode ??
         equivalentCurrencyOptions.find((currency) => currency.currencyCode !== baseCurrency)?.currencyCode ??
@@ -669,6 +703,29 @@ export function ProposalsPage() {
       approvalThresholdPercent: "5",
       remarks: ""
     });
+    setCreateOpen(true);
+  };
+
+  const openReplaceModal = (proposal: Proposal) => {
+    lastPrefilledOpportunityIdRef.current = proposal.opportunity.id;
+    handoffNoteRef.current = null;
+    setPrefillSource(`Replacing ${proposal.proposalNo}`);
+    setPricingContext(proposal.pricingContextJson ?? null);
+    setSupersedingProposalId(proposal.id);
+    setEquivalentCurrencyCode(proposal.equivalentCurrencyCode ?? baseCurrency);
+    proposalForm.reset({
+      opportunityId: proposal.opportunity.id,
+      unitId: proposal.unit.id ?? "",
+      validUntil: proposal.validUntil ? proposal.validUntil.slice(0, 10) : defaultProposalValidUntil(),
+      listPrice: proposal.listPrice == null ? "" : String(proposal.listPrice),
+      proposedPrice: proposal.proposedPrice == null ? "" : String(proposal.proposedPrice),
+      discountAmount: proposal.discountAmount == null ? "" : String(proposal.discountAmount),
+      discountPercent: proposal.discountPercent == null ? "" : String(proposal.discountPercent),
+      approvalThresholdPercent:
+        proposal.approvalThresholdPercent == null ? "5" : String(proposal.approvalThresholdPercent),
+      remarks: `Replacement for ${proposal.proposalNo}`
+    });
+    setProposalDetailModalOpen(false);
     setCreateOpen(true);
   };
 
@@ -805,7 +862,10 @@ export function ProposalsPage() {
   ]);
 
   useModalEscape(proposalDetailModalOpen, closeProposalDetailModal, { disabled: createOpen });
-  useModalEscape(createOpen, () => setCreateOpen(false));
+  useModalEscape(createOpen, () => {
+    setCreateOpen(false);
+    setSupersedingProposalId(null);
+  });
 
   const selectedProposalAuditLines = buildProposalAuditLines(selectedProposal?.pricingContextJson ?? null, baseCurrency);
 
@@ -850,7 +910,7 @@ export function ProposalsPage() {
           <section aria-modal="true" className="crm-modal crm-management-modal crm-reservation-modal crm-proposal-modal" role="dialog">
             <div className="crm-panel-header">
               <div>
-                <h3>Create Proposal</h3>
+                <h3>{supersedingProposalId ? "Replace Proposal" : "Create Proposal"}</h3>
                 <p className="crm-muted-text">All proposal amounts are captured in base currency ({baseCurrency}).</p>
               </div>
               <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
@@ -1014,7 +1074,13 @@ export function ProposalsPage() {
                   Close
                 </button>
                 <button className="crm-primary-button crm-fit-button" disabled={createMutation.isPending} type="submit">
-                  {createMutation.isPending ? "Creating..." : "Create Proposal"}
+                  {createMutation.isPending
+                    ? supersedingProposalId
+                      ? "Replacing..."
+                      : "Creating..."
+                    : supersedingProposalId
+                      ? "Replace Proposal"
+                      : "Create Proposal"}
                 </button>
               </div>
             </form>
@@ -1036,12 +1102,25 @@ export function ProposalsPage() {
           <table className="crm-table">
             <thead>
               <tr>
-                <th>Proposal</th>
-                <th>Customer</th>
-                <th>Unit</th>
-                <th>Status</th>
-                <th>Discount</th>
-                <th>Proposed</th>
+                <SortableTh
+                  column="proposalNo"
+                  label="Proposal"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
+                <SortableTh column="customer" label="Customer" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="unit" label="Unit" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="status" label="Status" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="discount" label="Discount" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="proposed" label="Proposed" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh
+                  column="createdAt"
+                  label="Created Date"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
               </tr>
             </thead>
             <tbody>
@@ -1060,11 +1139,12 @@ export function ProposalsPage() {
                   <td>{proposal.proposalStatus.name}</td>
                   <td>{proposal.discountPercent === null ? "-" : `${proposal.discountPercent}%`}</td>
                   <td>{formatInBase(proposal.proposedPrice, proposal.currencyCode)}</td>
+                  <td>{formatDate(proposal.createdAt)}</td>
                 </tr>
               ))}
               {proposalRows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={6}>
+                  <td className="crm-empty-cell" colSpan={7}>
                     No proposals found.
                   </td>
                 </tr>
@@ -1093,9 +1173,12 @@ export function ProposalsPage() {
                 <h3>Proposal Detail</h3>
                 <p className="crm-muted-text">{selectedProposal?.proposalNo ?? "Loading proposal..."}</p>
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={closeProposalDetailModal} type="button">
-                Close
-              </button>
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
+                <button className="crm-secondary-button crm-fit-button" onClick={closeProposalDetailModal} type="button">
+                  Close
+                </button>
+              </div>
             </div>
 
             {proposalDetailQuery.isLoading && !selectedProposal ? (
@@ -1106,46 +1189,44 @@ export function ProposalsPage() {
                   <div>
                     <strong>{selectedProposal.customer.name}</strong>
                     <span>{selectedProposal.proposalNo}</span>
+                    <ul className="crm-detail-facts">
+                      <li>
+                        <span className="crm-detail-fact-label">Opportunity</span>
+                        <span className="crm-detail-fact-value">{selectedProposal.opportunity.opportunityNo ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Unit</span>
+                        <span className="crm-detail-fact-value">{selectedProposal.unit.unitCode ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">List Price</span>
+                        <span className="crm-detail-fact-value">
+                          {formatInBase(selectedProposal.listPrice, selectedProposal.currencyCode)}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Proposed</span>
+                        <span className="crm-detail-fact-value">
+                          {formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Discount</span>
+                        <span className="crm-detail-fact-value">
+                          {formatInBase(selectedProposal.discountAmount, selectedProposal.currencyCode)}
+                          {selectedProposal.discountPercent == null ? "" : ` / ${selectedProposal.discountPercent}%`}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Valid Until</span>
+                        <span className="crm-detail-fact-value">{selectedProposal.validUntil ?? "-"}</span>
+                      </li>
+                    </ul>
                   </div>
                   <span className="crm-status-pill">{selectedProposal.proposalStatus.name}</span>
                 </div>
                 <SalesPipelineStrip current="proposal" />
-                <WorkflowTracker steps={proposalWorkflowSteps(selectedProposal, formatInBase)} />
-                <dl className="crm-detail-list">
-                  <div>
-                    <dt>Opportunity</dt>
-                    <dd>{selectedProposal.opportunity.opportunityNo}</dd>
-                  </div>
-                  <div>
-                    <dt>Unit</dt>
-                    <dd>{selectedProposal.unit.unitCode ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>List Price</dt>
-                    <dd>{formatInBase(selectedProposal.listPrice, selectedProposal.currencyCode)}</dd>
-                  </div>
-                  <div>
-                    <dt>Proposed Price</dt>
-                    <dd>{formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}</dd>
-                  </div>
-                  <div>
-                    <dt>Discount</dt>
-                    <dd>
-                      {formatInBase(selectedProposal.discountAmount, selectedProposal.currencyCode)} /{" "}
-                      {selectedProposal.discountPercent === null ? "-" : `${selectedProposal.discountPercent}%`}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Valid Until</dt>
-                    <dd>{selectedProposal.validUntil ?? "-"}</dd>
-                  </div>
-                  {selectedProposal.equivalentCurrencyCode ? (
-                    <div>
-                      <dt>Equivalent Currency</dt>
-                      <dd>{selectedProposal.equivalentCurrencyCode}</dd>
-                    </div>
-                  ) : null}
-                </dl>
+                <WorkflowTracker showDetail={false} steps={proposalWorkflowSteps(selectedProposal, formatInBase)} />
 
                 {selectedProposalAuditLines.length > 0 ? (
                   <section className="crm-activity-list">
@@ -1217,6 +1298,14 @@ export function ProposalsPage() {
                           type="button"
                         >
                           {acceptMutation.isPending ? "Accepting..." : "Accept Proposal"}
+                        </button>
+                        <button
+                          className="crm-secondary-button crm-opportunity-action-button"
+                          disabled={!selectedProposal.isActive}
+                          onClick={() => openReplaceModal(selectedProposal)}
+                          type="button"
+                        >
+                          Replace Proposal
                         </button>
                       </div>
                     </div>

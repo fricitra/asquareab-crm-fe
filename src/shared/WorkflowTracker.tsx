@@ -21,7 +21,13 @@ function valueText(value: string | number | null | undefined) {
   return String(value);
 }
 
-export function WorkflowTracker({ steps }: { steps: WorkflowStep[] }) {
+export function WorkflowTracker({
+  steps,
+  showDetail = true
+}: {
+  steps: WorkflowStep[];
+  showDetail?: boolean;
+}) {
   const defaultStepId = useMemo(() => {
     const lastCompleted = [...steps].reverse().find((step) => step.status === "completed");
     return steps.find((step) => step.status === "current")?.id ?? lastCompleted?.id ?? steps[0]?.id;
@@ -36,17 +42,18 @@ export function WorkflowTracker({ steps }: { steps: WorkflowStep[] }) {
   if (!selectedStep) return null;
 
   return (
-    <section className="crm-workflow">
+    <section className={`crm-workflow${showDetail ? "" : " crm-workflow-compact"}`}>
       <div className="crm-workflow-header">
         <h4>Workflow Status</h4>
-        <span>{selectedStep.title}</span>
+        {showDetail ? <span>{selectedStep.title}</span> : null}
       </div>
       <div className="crm-workflow-steps">
         {steps.map((step) => (
           <button
-            className={`crm-workflow-step is-${step.status}${selectedStep.id === step.id ? " is-active" : ""}`}
+            className={`crm-workflow-step is-${step.status}${showDetail && selectedStep.id === step.id ? " is-active" : ""}`}
             key={step.id}
-            onClick={() => setSelectedStepId(step.id)}
+            onClick={showDetail ? () => setSelectedStepId(step.id) : undefined}
+            tabIndex={showDetail ? 0 : -1}
             type="button"
           >
             <strong>{step.title}</strong>
@@ -54,29 +61,31 @@ export function WorkflowTracker({ steps }: { steps: WorkflowStep[] }) {
           </button>
         ))}
       </div>
-      <article className="crm-workflow-detail">
-        <div className="crm-workflow-detail-title">
-          <strong>{selectedStep.title}</strong>
-          <span>{formatDate(selectedStep.timestamp)}</span>
-        </div>
-        <p>{selectedStep.summary ?? "No additional summary captured for this step."}</p>
-        <dl className="crm-workflow-data">
-          <div>
-            <dt>User</dt>
-            <dd>{valueText(selectedStep.user)}</dd>
+      {showDetail ? (
+        <article className="crm-workflow-detail">
+          <div className="crm-workflow-detail-title">
+            <strong>{selectedStep.title}</strong>
+            <span>{formatDate(selectedStep.timestamp)}</span>
           </div>
-          <div>
-            <dt>Role</dt>
-            <dd>{valueText(selectedStep.role)}</dd>
-          </div>
-          {selectedStep.details.map((item) => (
-            <div key={item.label}>
-              <dt>{item.label}</dt>
-              <dd>{valueText(item.value)}</dd>
+          <p>{selectedStep.summary ?? "No additional summary captured for this step."}</p>
+          <dl className="crm-workflow-data">
+            <div>
+              <dt>User</dt>
+              <dd>{valueText(selectedStep.user)}</dd>
             </div>
-          ))}
-        </dl>
-      </article>
+            <div>
+              <dt>Role</dt>
+              <dd>{valueText(selectedStep.role)}</dd>
+            </div>
+            {selectedStep.details.map((item) => (
+              <div key={item.label}>
+                <dt>{item.label}</dt>
+                <dd>{valueText(item.value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </article>
+      ) : null}
     </section>
   );
 }

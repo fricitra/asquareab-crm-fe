@@ -16,6 +16,7 @@ import {
   markErpHandoffFailed,
   markErpHandoffReady,
   signContract,
+  supersedeContract,
   type Contract
 } from "../api/contracts";
 import { listReservations } from "../api/reservations";
@@ -27,8 +28,10 @@ import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
 import { PaymentPlanDialog, type PaymentPlanFormValues } from "../shared/PaymentPlanDialog";
+import { SortableTh } from "../shared/SortableTh";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
 import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 
 type ContractFormValues = {
   reservationId: string;
@@ -71,7 +74,7 @@ function formatDate(value: string | null) {
 }
 
 function contractNextAction(contract: Contract) {
-  if (contract.contractStatus.code === "CANCELLED") {
+  if (contract.contractStatus.code === "CANCELLED" || contract.contractStatus.code === "SUPERSEDED") {
     return {
       title: "Contract cancelled",
       summary: "No further workflow action is available for this contract.",
@@ -134,7 +137,7 @@ function contractWorkflowSteps(
   const status = contract.contractStatus.code;
   const history = contract.statusHistory ?? [];
   const historyByCode = new Map(history.map((item) => [item.contractStatus.code, item]));
-  const isCancelled = status === "CANCELLED";
+  const isCancelled = status === "CANCELLED" || status === "SUPERSEDED";
   const isIssued = status === "ISSUED" || status === "SIGNED";
   const isSigned = status === "SIGNED";
   const hasPaymentPlan = contract.commercialSummary?.hasCompletePaymentPlan ?? false;
@@ -240,11 +243,13 @@ export function ContractsPage() {
   const { formatInBase, formatMoney, defaultContractCurrency } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [listSort, setListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [contractDetailModalOpen, setContractDetailModalOpen] = useState(false);
   const [paymentPlanModalOpen, setPaymentPlanModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [supersedingContractId, setSupersedingContractId] = useState<string | null>(null);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
     title: "",
@@ -265,19 +270,26 @@ export function ContractsPage() {
   });
 
   const contractsQuery = useQuery({
-    queryKey: ["contracts", search, page],
+    queryKey: ["contracts", search, page, listSort.sortBy, listSort.sortDir],
     queryFn: () =>
       listContracts({
         search: search || undefined,
         limit: pageSize,
-        offset: (page - 1) * pageSize
+        offset: (page - 1) * pageSize,
+        sortBy: listSort.sortBy,
+        sortDir: listSort.sortDir
       }),
     staleTime: 10_000
   });
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, listSort.sortBy, listSort.sortDir]);
+
+  const onSortColumn = (column: string) => {
+    const preferDesc = column === "value" || column === "createdAt" || column === "contractNo";
+    setListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
   const contractDetailQuery = useQuery({
     queryKey: ["contract", selectedContractId],
     queryFn: () => getContract(selectedContractId ?? ""),
@@ -328,6 +340,7 @@ export function ContractsPage() {
     reservationId?: string,
     prefill?: { contractValue?: number; currencyCode?: string; remarks?: string; fromProposal?: string }
   ) => {
+    setSupersedingContractId(null);
     handoffNoteRef.current = prefill?.fromProposal
       ? `Opened from accepted proposal ${prefill.fromProposal}.`
       : null;
@@ -340,22 +353,61 @@ export function ContractsPage() {
     setCreateOpen(true);
   };
 
+  const openReplaceModal = (contract: Contract) => {
+    if (!contract.reservation.id) {
+      showNotice("Replace Unavailable", "This contract has no linked reservation to recreate from.", "error");
+      return;
+    }
+    setSupersedingContractId(contract.id);
+    handoffNoteRef.current = null;
+    contractForm.reset({
+      reservationId: contract.reservation.id,
+      contractValue: contract.contractValue == null ? "" : String(contract.contractValue),
+      currencyCode: contract.currencyCode ?? defaultContractCurrency,
+      remarks: `Replacement for ${contract.contractNo}`
+    });
+    setContractDetailModalOpen(false);
+    setCreateOpen(true);
+  };
+
   const createMutation = useMutation({
-    mutationFn: (values: ContractFormValues) =>
-      createContract({
+    mutationFn: (values: ContractFormValues) => {
+      const payload = {
         reservationId: values.reservationId,
         contractValue: pickNumber(values.contractValue),
         currencyCode: pickString(values.currencyCode),
         remarks: pickString(values.remarks)
-      }),
+      };
+      if (supersedingContractId) {
+        return supersedeContract(supersedingContractId, payload);
+      }
+      return createContract(payload);
+    },
     onSuccess: (contract) => {
+      const wasReplace = Boolean(supersedingContractId);
       setCreateOpen(false);
+      setSupersedingContractId(null);
       handoffNoteRef.current = null;
-      refreshContract(contract, "Contract Created", `Contract ${contract.contractNo} draft is ready. Next: issue the contract (Step 1).`);
+      refreshContract(
+        contract,
+        wasReplace ? "Contract Replaced" : "Contract Created",
+        wasReplace
+          ? `Prior contract superseded. ${contract.contractNo} is the active draft.`
+          : `Contract ${contract.contractNo} draft is ready. Next: issue the contract (Step 1).`
+      );
       contractForm.reset({ reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" });
     },
     onError: (error) =>
-      showNotice("Contract Not Created", getApiErrorMessage(error, "Contract could not be created. Use an approved reservation."), "error")
+      showNotice(
+        supersedingContractId ? "Replace Failed" : "Contract Not Created",
+        getApiErrorMessage(
+          error,
+          supersedingContractId
+            ? "Contract could not be replaced. Signed contracts must be cancelled first."
+            : "Contract could not be created. Use an approved reservation."
+        ),
+        "error"
+      )
   });
 
   const issueMutation = useMutation({
@@ -541,7 +593,7 @@ export function ContractsPage() {
           >
             <div className="crm-panel-header">
               <div>
-                <h3>Create Contract</h3>
+                <h3>{supersedingContractId ? "Replace Contract" : "Create Contract"}</h3>
                 <p className="crm-muted-text">Create a draft contract from an approved reservation.</p>
               </div>
               <button className="crm-secondary-button crm-fit-button" onClick={() => setCreateOpen(false)} type="button">
@@ -613,7 +665,13 @@ export function ContractsPage() {
                   Close
                 </button>
                 <button className="crm-primary-button crm-fit-button" disabled={createMutation.isPending} type="submit">
-                  {createMutation.isPending ? "Creating..." : "Create Contract"}
+                  {createMutation.isPending
+                    ? supersedingContractId
+                      ? "Replacing..."
+                      : "Creating..."
+                    : supersedingContractId
+                      ? "Replace Contract"
+                      : "Create Contract"}
                 </button>
               </div>
             </form>
@@ -635,12 +693,25 @@ export function ContractsPage() {
           <table className="crm-table">
             <thead>
               <tr>
-                <th>Contract</th>
-                <th>Customer</th>
-                <th>Unit</th>
-                <th>Status</th>
-                <th>Value</th>
-                <th>ERP</th>
+                <SortableTh
+                  column="contractNo"
+                  label="Contract"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
+                <SortableTh column="customer" label="Customer" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="unit" label="Unit" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="status" label="Status" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="value" label="Value" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="erp" label="ERP" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh
+                  column="createdAt"
+                  label="Created Date"
+                  onSort={onSortColumn}
+                  sortBy={listSort.sortBy}
+                  sortDir={listSort.sortDir}
+                />
               </tr>
             </thead>
             <tbody>
@@ -659,11 +730,12 @@ export function ContractsPage() {
                   <td>{contract.contractStatus.name}</td>
                   <td>{formatInBase(contract.contractValue, contract.currencyCode)}</td>
                   <td>{contract.erpHandoffStatus}</td>
+                  <td>{formatDate(contract.createdAt)}</td>
                 </tr>
               ))}
               {contractRows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={6}>
+                  <td className="crm-empty-cell" colSpan={7}>
                     No contracts found.
                   </td>
                 </tr>
@@ -692,9 +764,12 @@ export function ContractsPage() {
                 <h3>Contract Detail</h3>
                 <p className="crm-muted-text">{selectedContract?.contractNo ?? "Loading contract..."}</p>
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={closeContractDetailModal} type="button">
-                Close
-              </button>
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
+                <button className="crm-secondary-button crm-fit-button" onClick={closeContractDetailModal} type="button">
+                  Close
+                </button>
+              </div>
             </div>
 
             {contractDetailQuery.isLoading && !selectedContract ? (
@@ -705,37 +780,39 @@ export function ContractsPage() {
                   <div>
                     <strong>{selectedContract.customer.name}</strong>
                     <span>{selectedContract.contractNo}</span>
+                    <ul className="crm-detail-facts">
+                      <li>
+                        <span className="crm-detail-fact-label">Reservation</span>
+                        <span className="crm-detail-fact-value">{selectedContract.reservation.reservationNo ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Opportunity</span>
+                        <span className="crm-detail-fact-value">{selectedContract.opportunity.opportunityNo ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Project</span>
+                        <span className="crm-detail-fact-value">{selectedContract.project.projectCode ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Unit</span>
+                        <span className="crm-detail-fact-value">{selectedContract.unit.unitCode ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Value</span>
+                        <span className="crm-detail-fact-value">
+                          {formatInBase(selectedContract.contractValue, selectedContract.currencyCode)}
+                        </span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">ERP Handoff</span>
+                        <span className="crm-detail-fact-value">{selectedContract.erpHandoffStatus ?? "-"}</span>
+                      </li>
+                    </ul>
                   </div>
                   <span className="crm-status-pill">{selectedContract.contractStatus.name}</span>
                 </div>
                 <SalesPipelineStrip current={selectedContract.erpHandoffStatus === "HANDED_OFF" ? "erp" : "contract"} />
-                <WorkflowTracker steps={contractWorkflowSteps(selectedContract, formatInBase)} />
-                <dl className="crm-detail-list">
-                  <div>
-                    <dt>Reservation</dt>
-                    <dd>{selectedContract.reservation.reservationNo}</dd>
-                  </div>
-                  <div>
-                    <dt>Opportunity</dt>
-                    <dd>{selectedContract.opportunity.opportunityNo ?? "-"}</dd>
-                  </div>
-                  <div>
-                    <dt>Project</dt>
-                    <dd>{selectedContract.project.projectCode}</dd>
-                  </div>
-                  <div>
-                    <dt>Unit</dt>
-                    <dd>{selectedContract.unit.unitCode}</dd>
-                  </div>
-                  <div>
-                    <dt>Value</dt>
-                    <dd>{formatInBase(selectedContract.contractValue, selectedContract.currencyCode)}</dd>
-                  </div>
-                  <div>
-                    <dt>ERP Handoff</dt>
-                    <dd>{selectedContract.erpHandoffStatus}</dd>
-                  </div>
-                </dl>
+                <WorkflowTracker showDetail={false} steps={contractWorkflowSteps(selectedContract, formatInBase)} />
 
                 {selectedContractNextAction ? (
                   <section className="crm-next-action">
@@ -830,12 +907,28 @@ export function ContractsPage() {
                           </button>
                           <button
                             className="crm-secondary-button crm-opportunity-action-button"
-                            disabled={selectedContract.contractStatus.code === "CANCELLED" || cancelMutation.isPending}
+                            disabled={
+                              selectedContract.contractStatus.code === "CANCELLED" ||
+                              selectedContract.contractStatus.code === "SUPERSEDED" ||
+                              selectedContract.erpHandoffStatus === "HANDED_OFF" ||
+                              cancelMutation.isPending
+                            }
                             onClick={() => cancelMutation.mutate(selectedContract.id)}
                             type="button"
                           >
                             {cancelMutation.isPending ? "Cancelling..." : "Cancel Contract"}
                           </button>
+                          {selectedContract.contractStatus.code === "DRAFT" ||
+                          selectedContract.contractStatus.code === "ISSUED" ? (
+                            <button
+                              className="crm-secondary-button crm-opportunity-action-button"
+                              disabled={!selectedContract.isActive || selectedContract.erpHandoffStatus === "HANDED_OFF"}
+                              onClick={() => openReplaceModal(selectedContract)}
+                              type="button"
+                            >
+                              Replace Contract
+                            </button>
+                          ) : null}
                         </div>
                       </div>
 

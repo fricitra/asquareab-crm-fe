@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Contract } from "../api/contracts";
 import { getReferenceFamily } from "../api/reference-data";
 import { useModalEscape } from "../hooks/useModalEscape";
+import { CurrencyBadge } from "./CurrencyBadge";
 import { DateField } from "./DateField";
 
 export type PaymentPlanFormValues = {
@@ -192,9 +193,12 @@ export function PaymentPlanDialog({
               {contract.contractNo} · {activePaymentPlan ? "Edit saved plan" : "Configure SPA payment stages"}
             </p>
           </div>
-          <button className="crm-secondary-button crm-fit-button" onClick={onClose} type="button">
-            Close
-          </button>
+          <div className="crm-modal-header-actions">
+            <CurrencyBadge compact />
+            <button className="crm-secondary-button crm-fit-button" onClick={onClose} type="button">
+              Close
+            </button>
+          </div>
         </div>
 
         <form className="crm-opportunity-detail-body" onSubmit={onSubmit}>

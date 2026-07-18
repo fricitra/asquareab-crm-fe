@@ -17,9 +17,12 @@ import {
 import { getCitiesByCountry, getGeographyCountries, getReferenceFamily } from "../api/reference-data";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { AgreedPackView } from "../shared/AgreedPackView";
+import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 
 type CustomerTab = "customers" | "brokers";
 
@@ -145,6 +148,8 @@ export function CustomersPage() {
   const [search, setSearch] = useState("");
   const [customerPage, setCustomerPage] = useState(1);
   const [brokerPage, setBrokerPage] = useState(1);
+  const [customerListSort, setCustomerListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
+  const [brokerListSort, setBrokerListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedBrokerId, setSelectedBrokerId] = useState<string | null>(null);
@@ -164,22 +169,26 @@ export function CustomersPage() {
   const brokerForm = useForm<BrokerFormValues>({ defaultValues: blankBroker });
 
   const customersQuery = useQuery({
-    queryKey: ["customers", search, customerPage],
+    queryKey: ["customers", search, customerPage, customerListSort.sortBy, customerListSort.sortDir],
     queryFn: () =>
       listCustomers({
         search: search || undefined,
         limit: pageSize,
-        offset: (customerPage - 1) * pageSize
+        offset: (customerPage - 1) * pageSize,
+        sortBy: customerListSort.sortBy,
+        sortDir: customerListSort.sortDir
       }),
     staleTime: 10_000
   });
   const brokersQuery = useQuery({
-    queryKey: ["brokers", search, brokerPage],
+    queryKey: ["brokers", search, brokerPage, brokerListSort.sortBy, brokerListSort.sortDir],
     queryFn: () =>
       listBrokers({
         search: search || undefined,
         limit: pageSize,
-        offset: (brokerPage - 1) * pageSize
+        offset: (brokerPage - 1) * pageSize,
+        sortBy: brokerListSort.sortBy,
+        sortDir: brokerListSort.sortDir
       }),
     staleTime: 10_000
   });
@@ -188,6 +197,24 @@ export function CustomersPage() {
     setCustomerPage(1);
     setBrokerPage(1);
   }, [search]);
+
+  useEffect(() => {
+    setCustomerPage(1);
+  }, [customerListSort.sortBy, customerListSort.sortDir]);
+
+  useEffect(() => {
+    setBrokerPage(1);
+  }, [brokerListSort.sortBy, brokerListSort.sortDir]);
+
+  const onCustomerSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt";
+    setCustomerListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
+
+  const onBrokerSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt";
+    setBrokerListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
   const selectedCustomerQuery = useQuery({
     queryKey: ["customer", selectedCustomerId],
     queryFn: () => getCustomer(selectedCustomerId ?? ""),
@@ -378,7 +405,10 @@ export function CustomersPage() {
       <section className="crm-module-header">
         <div>
           <p className="crm-eyebrow">Customers</p>
-          <h2>Customer and Broker Workspace</h2>
+          <div className="crm-dashboard-title-row">
+            <h2>Customer and Broker Workspace</h2>
+            <CurrencyBadge />
+          </div>
         </div>
       </section>
 
@@ -436,11 +466,48 @@ export function CustomersPage() {
               <table className="crm-table">
                 <thead>
                   <tr>
-                    <th>Customer</th>
-                    <th>Contact</th>
-                    <th>Buyer Type</th>
-                    <th>Project</th>
-                    <th>Status</th>
+                    <SortableTh
+                      column="customer"
+                      label="Customer"
+                      onSort={onCustomerSortColumn}
+                      sortBy={customerListSort.sortBy}
+                      sortDir={customerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="contact"
+                      label="Contact"
+                      onSort={onCustomerSortColumn}
+                      sortBy={customerListSort.sortBy}
+                      sortDir={customerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="buyerType"
+                      label="Buyer Type"
+                      onSort={onCustomerSortColumn}
+                      sortBy={customerListSort.sortBy}
+                      sortDir={customerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="project"
+                      label="Project"
+                      onSort={onCustomerSortColumn}
+                      sortBy={customerListSort.sortBy}
+                      sortDir={customerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="status"
+                      label="Status"
+                      onSort={onCustomerSortColumn}
+                      sortBy={customerListSort.sortBy}
+                      sortDir={customerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onCustomerSortColumn}
+                      sortBy={customerListSort.sortBy}
+                      sortDir={customerListSort.sortDir}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -463,6 +530,7 @@ export function CustomersPage() {
                             ? "Customer"
                             : customer.status}
                       </td>
+                      <td>{formatDate(customer.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -651,9 +719,12 @@ export function CustomersPage() {
                 <h3>Agreed Pack</h3>
                 <p className="crm-muted-text">{customerAgreedPackDetailQuery.data?.agreement.contractNo ?? "Loading..."}</p>
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={() => setAgreedPackContractId(null)} type="button">
-                Close
-              </button>
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setAgreedPackContractId(null)} type="button">
+                  Close
+                </button>
+              </div>
             </div>
             {customerAgreedPackDetailQuery.isLoading ? (
               <p className="crm-muted-text">Loading agreed pack...</p>
@@ -692,11 +763,48 @@ export function CustomersPage() {
               <table className="crm-table">
                 <thead>
                   <tr>
-                    <th>Broker</th>
-                    <th>Contact</th>
-                    <th>City</th>
-                    <th>Plan</th>
-                    <th>Status</th>
+                    <SortableTh
+                      column="broker"
+                      label="Broker"
+                      onSort={onBrokerSortColumn}
+                      sortBy={brokerListSort.sortBy}
+                      sortDir={brokerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="contact"
+                      label="Contact"
+                      onSort={onBrokerSortColumn}
+                      sortBy={brokerListSort.sortBy}
+                      sortDir={brokerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="city"
+                      label="City"
+                      onSort={onBrokerSortColumn}
+                      sortBy={brokerListSort.sortBy}
+                      sortDir={brokerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="plan"
+                      label="Plan"
+                      onSort={onBrokerSortColumn}
+                      sortBy={brokerListSort.sortBy}
+                      sortDir={brokerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="status"
+                      label="Status"
+                      onSort={onBrokerSortColumn}
+                      sortBy={brokerListSort.sortBy}
+                      sortDir={brokerListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onBrokerSortColumn}
+                      sortBy={brokerListSort.sortBy}
+                      sortDir={brokerListSort.sortDir}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -713,6 +821,7 @@ export function CustomersPage() {
                       <td>{broker.city ?? "-"}</td>
                       <td>{broker.commissionPlanCode ?? "-"}</td>
                       <td>{broker.status}</td>
+                      <td>{formatDate(broker.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>

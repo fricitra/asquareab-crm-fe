@@ -13,7 +13,7 @@ import {
 } from "../api/dashboard";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { useModalEscape } from "../hooks/useModalEscape";
-import { formatAmount } from "../lib/format-money";
+import { formatMoney } from "../lib/format-money";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DashboardAiAssistant } from "../shared/DashboardAiAssistant";
 import { DashboardPeriodSelect } from "../shared/DashboardPeriodSelect";
@@ -76,7 +76,7 @@ function ComparisonTable({
 function StatusBars({
   items,
   valueMode = false,
-  formatValue = formatAmount
+  formatValue = (value) => formatMoney(value)
 }: {
   items: DashboardBreakdown[];
   valueMode?: boolean;
@@ -313,7 +313,7 @@ export function DashboardPage() {
   const metrics = summary.metrics;
   const velocity = summary.salesVelocity;
   const formatMetric = (value: number) => formatInBase(value);
-  const formatUsd = (value: number) => `USD ${formatAmount(value)}`;
+  const formatUsd = (value: number) => formatMoney(value, "USD");
   const formatRevenueComparison = (value: number) =>
     !showUsdToggle || revenueCurrency === "base" ? formatMetric(value) : formatUsd(value);
   const revenueUnitLabel =

@@ -27,9 +27,11 @@ import { listCurrencies } from "../api/currencies";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 import { UnitVelocityBadge } from "../shared/UnitVelocityBadge";
 import { getReferenceFamily, type ReferenceDataItem } from "../api/reference-data";
 
@@ -255,6 +257,11 @@ function area(value: number | null) {
   return value === null ? "-" : value.toLocaleString();
 }
 
+function formatDate(value: string | null) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString();
+}
+
 function yesNo(value: boolean | null | undefined) {
   return value ? "Yes" : "No";
 }
@@ -420,6 +427,8 @@ export function InventoryPage() {
   const [unitPage, setUnitPage] = useState(1);
   const [productPage, setProductPage] = useState(1);
   const [availabilityPage, setAvailabilityPage] = useState(1);
+  const [unitListSort, setUnitListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
+  const [availabilityListSort, setAvailabilityListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   // "" = All statuses (default for Unit Status Register)
   const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState("");
   const [unitModalOpen, setUnitModalOpen] = useState(false);
@@ -541,12 +550,14 @@ export function InventoryPage() {
     staleTime: 10_000
   });
   const unitsQuery = useQuery({
-    queryKey: ["inventory", "units", search, unitPage],
+    queryKey: ["inventory", "units", search, unitPage, unitListSort.sortBy, unitListSort.sortDir],
     queryFn: () =>
       listUnits({
         search: search || undefined,
         limit: pageSize,
-        offset: (unitPage - 1) * pageSize
+        offset: (unitPage - 1) * pageSize,
+        sortBy: unitListSort.sortBy,
+        sortDir: unitListSort.sortDir
       }),
     staleTime: 10_000
   });
@@ -566,13 +577,23 @@ export function InventoryPage() {
     staleTime: 30_000
   });
   const availabilityQuery = useQuery({
-    queryKey: ["inventory", "availability", search, availabilityPage, availabilityStatusFilter],
+    queryKey: [
+      "inventory",
+      "availability",
+      search,
+      availabilityPage,
+      availabilityStatusFilter,
+      availabilityListSort.sortBy,
+      availabilityListSort.sortDir
+    ],
     queryFn: () =>
       listUnits({
         search: search || undefined,
         availabilityStatusRefId: availabilityStatusFilter || undefined,
         limit: pageSize,
-        offset: (availabilityPage - 1) * pageSize
+        offset: (availabilityPage - 1) * pageSize,
+        sortBy: availabilityListSort.sortBy,
+        sortDir: availabilityListSort.sortDir
       }),
     staleTime: 10_000
   });
@@ -588,6 +609,24 @@ export function InventoryPage() {
     setProductPage(1);
     setAvailabilityPage(1);
   }, [search]);
+
+  useEffect(() => {
+    setUnitPage(1);
+  }, [unitListSort.sortBy, unitListSort.sortDir]);
+
+  useEffect(() => {
+    setAvailabilityPage(1);
+  }, [availabilityListSort.sortBy, availabilityListSort.sortDir]);
+
+  const onUnitSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt" || column === "price" || column === "area";
+    setUnitListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
+
+  const onAvailabilitySortColumn = (column: string) => {
+    const preferDesc = column === "createdAt" || column === "price" || column === "area";
+    setAvailabilityListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
   const selectedProjectQuery = useQuery({ queryKey: ["inventory", "project", selectedProjectId], queryFn: () => getProject(selectedProjectId ?? ""), enabled: Boolean(selectedProjectId) });
   const selectedUnitQuery = useQuery({ queryKey: ["inventory", "unit", selectedUnitId], queryFn: () => getUnit(selectedUnitId ?? ""), enabled: Boolean(selectedUnitId) });
   const selectedProduct = useMemo(
@@ -1396,7 +1435,66 @@ export function InventoryPage() {
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table">
-                <thead><tr><th>Unit</th><th>Project</th><th>Type</th><th>Block / Floor</th><th>Area</th><th>Price</th><th>Status</th></tr></thead>
+                <thead>
+                  <tr>
+                    <SortableTh
+                      column="unit"
+                      label="Unit"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="project"
+                      label="Project"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="type"
+                      label="Type"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="block"
+                      label="Block / Floor"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="area"
+                      label="Area"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="price"
+                      label="Price"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="status"
+                      label="Status"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onAvailabilitySortColumn}
+                      sortBy={availabilityListSort.sortBy}
+                      sortDir={availabilityListSort.sortDir}
+                    />
+                  </tr>
+                </thead>
                 <tbody>
                   {availabilityRows.map((unit) => (
                     <tr key={unit.id}>
@@ -1407,11 +1505,12 @@ export function InventoryPage() {
                       <td>{area(unit.netArea)}</td>
                       <td>{formatInBase(unit.basePrice, unit.currencyCode)}</td>
                       <td><span className={`crm-status-pill crm-status-${unit.availabilityStatus.code?.toLowerCase() ?? "default"}`}>{unit.availabilityStatus.name ?? unit.status}</span></td>
+                      <td>{formatDate(unit.createdAt)}</td>
                     </tr>
                   ))}
                   {availabilityRows.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={7}>
+                      <td className="crm-empty-cell" colSpan={8}>
                         {availabilityQuery.isLoading ? "Loading unit status..." : "No units found for this status."}
                       </td>
                     </tr>
@@ -1452,7 +1551,67 @@ export function InventoryPage() {
             </div>
             <div className="crm-table-wrap">
               <table className="crm-table crm-unit-register-table">
-                <thead><tr><th>Unit</th><th>Project</th><th>Product</th><th>Type</th><th>Area</th><th>Price</th><th>Status</th><th>Action</th></tr></thead>
+                <thead>
+                  <tr>
+                    <SortableTh
+                      column="unit"
+                      label="Unit"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="project"
+                      label="Project"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="product"
+                      label="Product"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="type"
+                      label="Type"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="area"
+                      label="Area"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="price"
+                      label="Price"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="status"
+                      label="Status"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onUnitSortColumn}
+                      sortBy={unitListSort.sortBy}
+                      sortDir={unitListSort.sortDir}
+                    />
+                    <th>Action</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {unitRows.map((unit) => (
                     <tr className={selectedUnitId === unit.id ? "is-selected" : ""} key={unit.id}>
@@ -1463,6 +1622,7 @@ export function InventoryPage() {
                       <td>{area(unit.netArea)}</td>
                       <td>{formatInBase(unit.basePrice, unit.currencyCode)}</td>
                       <td><span className={`crm-status-pill crm-status-${unit.availabilityStatus.code?.toLowerCase() ?? "default"}`}>{unit.availabilityStatus.name ?? unit.status}</span></td>
+                      <td>{formatDate(unit.createdAt)}</td>
                       <td>
                         <button className="crm-secondary-button crm-small-button" onClick={() => loadUnitForm(unit)} type="button">
                           Open
@@ -1472,7 +1632,7 @@ export function InventoryPage() {
                   ))}
                   {unitRows.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={8}>
+                      <td className="crm-empty-cell" colSpan={9}>
                         No units found.
                       </td>
                     </tr>
@@ -1502,7 +1662,8 @@ export function InventoryPage() {
                 </p>
                 {selectedUnit?.salesVelocityTag ? <UnitVelocityBadge tag={selectedUnit.salesVelocityTag} /> : null}
               </div>
-              <div className="crm-dashboard-actions">
+              <div className="crm-modal-header-actions">
+                <CurrencyBadge compact />
                 <button className="crm-secondary-button crm-fit-button" onClick={resetUnitForm} type="button">New</button>
                 <button className="crm-secondary-button crm-fit-button" onClick={() => setUnitModalOpen(false)} type="button">Close</button>
               </div>

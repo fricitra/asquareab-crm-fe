@@ -69,6 +69,7 @@ export type Lead = {
   assignedByUser: NamedLink;
   assignedAt: string | null;
   capturedAt: string | null;
+  createdAt: string | null;
   capturedByUser: NamedLink;
   scoreTotal: number | null;
   scoreEngagement: number | null;

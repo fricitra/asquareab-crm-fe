@@ -79,7 +79,8 @@ export function formatMoney(
   currencyCode = "KES",
   options?: { compactAbove?: number }
 ) {
-  return `${formatAmount(value, options)} ${currencyCode}`;
+  const code = (currencyCode ?? "KES").trim().toUpperCase() || "KES";
+  return `${formatAmount(value, options)} ${code}`;
 }
 
 export function formatMoneyRange(

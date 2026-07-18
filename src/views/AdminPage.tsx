@@ -23,8 +23,10 @@ import {
   type RolePermission
 } from "../api/admin";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 
 type AdminTab = "users" | "roles";
 
@@ -149,6 +151,8 @@ export function AdminPage() {
   const [roleSearch, setRoleSearch] = useState("");
   const [userPage, setUserPage] = useState(1);
   const [rolePage, setRolePage] = useState(1);
+  const [userSort, setUserSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
+  const [roleSort, setRoleSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
@@ -167,33 +171,47 @@ export function AdminPage() {
   const roleForm = useForm<RoleFormValues>({ defaultValues: blankRoleForm });
 
   const usersQuery = useQuery({
-    queryKey: ["admin", "users", userSearch, userPage],
+    queryKey: ["admin", "users", userSearch, userPage, userSort.sortBy, userSort.sortDir],
     queryFn: () =>
       listAdminUsers({
         search: userSearch || undefined,
         limit: pageSize,
-        offset: (userPage - 1) * pageSize
+        offset: (userPage - 1) * pageSize,
+        sortBy: userSort.sortBy,
+        sortDir: userSort.sortDir
       }),
     staleTime: 10_000
   });
   const rolesQuery = useQuery({
-    queryKey: ["admin", "roles", roleSearch, rolePage],
+    queryKey: ["admin", "roles", roleSearch, rolePage, roleSort.sortBy, roleSort.sortDir],
     queryFn: () =>
       listAdminRoles({
         search: roleSearch || undefined,
         limit: pageSize,
-        offset: (rolePage - 1) * pageSize
+        offset: (rolePage - 1) * pageSize,
+        sortBy: roleSort.sortBy,
+        sortDir: roleSort.sortDir
       }),
     staleTime: 10_000
   });
 
   useEffect(() => {
     setUserPage(1);
-  }, [userSearch]);
+  }, [userSearch, userSort.sortBy, userSort.sortDir]);
 
   useEffect(() => {
     setRolePage(1);
-  }, [roleSearch]);
+  }, [roleSearch, roleSort.sortBy, roleSort.sortDir]);
+
+  const onUserSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt";
+    setUserSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
+
+  const onRoleSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt";
+    setRoleSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
   const permissionsQuery = useQuery({
     queryKey: ["admin", "permissions"],
     queryFn: listPermissions,
@@ -435,10 +453,23 @@ export function AdminPage() {
               <table className="crm-table">
                 <thead>
                   <tr>
-                    <th>User</th>
-                    <th>Primary Role</th>
-                    <th>Status</th>
-                    <th>Login</th>
+                    <SortableTh column="user" label="User" onSort={onUserSortColumn} sortBy={userSort.sortBy} sortDir={userSort.sortDir} />
+                    <SortableTh
+                      column="primaryRole"
+                      label="Primary Role"
+                      onSort={onUserSortColumn}
+                      sortBy={userSort.sortBy}
+                      sortDir={userSort.sortDir}
+                    />
+                    <SortableTh column="status" label="Status" onSort={onUserSortColumn} sortBy={userSort.sortBy} sortDir={userSort.sortDir} />
+                    <SortableTh column="login" label="Login" onSort={onUserSortColumn} sortBy={userSort.sortBy} sortDir={userSort.sortDir} />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onUserSortColumn}
+                      sortBy={userSort.sortBy}
+                      sortDir={userSort.sortDir}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -458,11 +489,12 @@ export function AdminPage() {
                       <td>{user.roles.find((role) => role.isPrimary)?.roleName ?? "-"}</td>
                       <td>{user.status}</td>
                       <td>{user.loginEnabled ? "Enabled" : "Disabled"}</td>
+                      <td>{formatDate(user.createdAt)}</td>
                     </tr>
                   ))}
                   {userRows.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={4}>No users found.</td>
+                      <td className="crm-empty-cell" colSpan={5}>No users found.</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -651,9 +683,16 @@ export function AdminPage() {
               <table className="crm-table">
                 <thead>
                   <tr>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Active</th>
+                    <SortableTh column="role" label="Role" onSort={onRoleSortColumn} sortBy={roleSort.sortBy} sortDir={roleSort.sortDir} />
+                    <SortableTh column="status" label="Status" onSort={onRoleSortColumn} sortBy={roleSort.sortBy} sortDir={roleSort.sortDir} />
+                    <SortableTh column="active" label="Active" onSort={onRoleSortColumn} sortBy={roleSort.sortBy} sortDir={roleSort.sortDir} />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onRoleSortColumn}
+                      sortBy={roleSort.sortBy}
+                      sortDir={roleSort.sortDir}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -672,11 +711,12 @@ export function AdminPage() {
                       </td>
                       <td>{role.status}</td>
                       <td>{role.isActive ? "Yes" : "No"}</td>
+                      <td>{formatDate(role.createdAt)}</td>
                     </tr>
                   ))}
                   {roleRows.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={3}>No roles found.</td>
+                      <td className="crm-empty-cell" colSpan={4}>No roles found.</td>
                     </tr>
                   ) : null}
                 </tbody>

@@ -74,6 +74,8 @@ export type Unit = {
   reservationStatus: NamedLink;
   status: string;
   isActive: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
   remarks: string | null;
   catalogue?: UnitCatalogue;
   salesVelocityTag?: UnitVelocityTag;

@@ -204,6 +204,11 @@ export async function cancelContract(id: string, remarks?: string) {
   return response.data;
 }
 
+export async function supersedeContract(id: string, payload: CreateContractPayload) {
+  const response = await apiClient.post<Contract>(`/contracts/${id}/supersede`, payload);
+  return response.data;
+}
+
 export async function createPaymentPlan(id: string, payload: CreatePaymentPlanPayload) {
   const response = await apiClient.post<Contract>(`/contracts/${id}/payment-plans`, payload);
   return response.data;

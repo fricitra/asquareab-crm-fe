@@ -171,6 +171,11 @@ export async function createProposal(payload: CreateProposalPayload) {
   return response.data;
 }
 
+export async function supersedeProposal(id: string, payload: CreateProposalPayload) {
+  const response = await apiClient.post<Proposal>(`/proposals/${id}/supersede`, payload);
+  return response.data;
+}
+
 export async function submitProposal(id: string, remarks?: string) {
   const response = await apiClient.post<Proposal>(`/proposals/${id}/submit`, { remarks });
   return response.data;

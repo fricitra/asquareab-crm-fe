@@ -17,9 +17,11 @@ import {
   type ExchangeRatePayload
 } from "../api/currencies";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 
 type CurrencyTab = "currencies" | "policy" | "rates";
 
@@ -209,6 +211,10 @@ function ratePayload(values: RateFormValues): ExchangeRatePayload {
   };
 }
 
+function formatDate(value: string | null) {
+  return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
+}
+
 export function CurrencyMasterPage() {
   const queryClient = useQueryClient();
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
@@ -216,6 +222,8 @@ export function CurrencyMasterPage() {
   const [search, setSearch] = useState("");
   const [currencyPage, setCurrencyPage] = useState(1);
   const [ratePage, setRatePage] = useState(1);
+  const [currencyListSort, setCurrencyListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
+  const [rateListSort, setRateListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const [selectedCurrencyId, setSelectedCurrencyId] = useState<string | null>(null);
   const [currencyModalOpen, setCurrencyModalOpen] = useState(false);
   const [rateModalOpen, setRateModalOpen] = useState(false);
@@ -245,13 +253,15 @@ export function CurrencyMasterPage() {
   const rateForm = useForm<RateFormValues>({ defaultValues: blankRateForm });
 
   const currenciesQuery = useQuery({
-    queryKey: ["currencies", search, currencyPage],
+    queryKey: ["currencies", search, currencyPage, currencyListSort.sortBy, currencyListSort.sortDir],
     queryFn: () =>
       listCurrencies({
         search: search || undefined,
         activeOnly: false,
         limit: pageSize,
-        offset: (currencyPage - 1) * pageSize
+        offset: (currencyPage - 1) * pageSize,
+        sortBy: currencyListSort.sortBy,
+        sortDir: currencyListSort.sortDir
       }),
     staleTime: 10_000
   });
@@ -271,19 +281,35 @@ export function CurrencyMasterPage() {
     staleTime: 10_000
   });
   const ratesQuery = useQuery({
-    queryKey: ["currencies", "rates", ratePage],
+    queryKey: ["currencies", "rates", ratePage, rateListSort.sortBy, rateListSort.sortDir],
     queryFn: () =>
       listExchangeRates({
         activeOnly: false,
         limit: pageSize,
-        offset: (ratePage - 1) * pageSize
+        offset: (ratePage - 1) * pageSize,
+        sortBy: rateListSort.sortBy,
+        sortDir: rateListSort.sortDir
       }),
     staleTime: 10_000
   });
 
   useEffect(() => {
     setCurrencyPage(1);
-  }, [search]);
+  }, [search, currencyListSort.sortBy, currencyListSort.sortDir]);
+
+  useEffect(() => {
+    setRatePage(1);
+  }, [rateListSort.sortBy, rateListSort.sortDir]);
+
+  const onCurrencySortColumn = (column: string) => {
+    const preferDesc = column === "createdAt" || column === "decimals";
+    setCurrencyListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
+
+  const onRateSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt" || column === "date" || column === "rate";
+    setRateListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
 
   const rows = currenciesQuery.data?.items ?? [];
   const selectedCurrency = selectedCurrencyQuery.data ?? null;
@@ -448,10 +474,41 @@ export function CurrencyMasterPage() {
               <table className="crm-table">
                 <thead>
                   <tr>
-                    <th>Currency</th>
-                    <th>Use</th>
-                    <th>Decimals</th>
-                    <th>Status</th>
+                    <SortableTh
+                      column="currency"
+                      label="Currency"
+                      onSort={onCurrencySortColumn}
+                      sortBy={currencyListSort.sortBy}
+                      sortDir={currencyListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="use"
+                      label="Use"
+                      onSort={onCurrencySortColumn}
+                      sortBy={currencyListSort.sortBy}
+                      sortDir={currencyListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="decimals"
+                      label="Decimals"
+                      onSort={onCurrencySortColumn}
+                      sortBy={currencyListSort.sortBy}
+                      sortDir={currencyListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="status"
+                      label="Status"
+                      onSort={onCurrencySortColumn}
+                      sortBy={currencyListSort.sortBy}
+                      sortDir={currencyListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onCurrencySortColumn}
+                      sortBy={currencyListSort.sortBy}
+                      sortDir={currencyListSort.sortDir}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -482,11 +539,12 @@ export function CurrencyMasterPage() {
                           {currency.status}
                         </span>
                       </td>
+                      <td>{formatDate(currency.createdAt)}</td>
                     </tr>
                   ))}
                   {rows.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={4}>No currencies found.</td>
+                      <td className="crm-empty-cell" colSpan={5}>No currencies found.</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -685,10 +743,41 @@ export function CurrencyMasterPage() {
               <table className="crm-table">
                 <thead>
                   <tr>
-                    <th>Pair</th>
-                    <th>Rate</th>
-                    <th>Date</th>
-                    <th>Source</th>
+                    <SortableTh
+                      column="pair"
+                      label="Pair"
+                      onSort={onRateSortColumn}
+                      sortBy={rateListSort.sortBy}
+                      sortDir={rateListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="rate"
+                      label="Rate"
+                      onSort={onRateSortColumn}
+                      sortBy={rateListSort.sortBy}
+                      sortDir={rateListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="date"
+                      label="Date"
+                      onSort={onRateSortColumn}
+                      sortBy={rateListSort.sortBy}
+                      sortDir={rateListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="source"
+                      label="Source"
+                      onSort={onRateSortColumn}
+                      sortBy={rateListSort.sortBy}
+                      sortDir={rateListSort.sortDir}
+                    />
+                    <SortableTh
+                      column="createdAt"
+                      label="Created Date"
+                      onSort={onRateSortColumn}
+                      sortBy={rateListSort.sortBy}
+                      sortDir={rateListSort.sortDir}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -701,11 +790,12 @@ export function CurrencyMasterPage() {
                       <td>{rate.rate.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
                       <td>{rate.rateDate}</td>
                       <td>{rate.source ?? "-"}</td>
+                      <td>{formatDate(rate.createdAt)}</td>
                     </tr>
                   ))}
                   {rates.length === 0 ? (
                     <tr>
-                      <td className="crm-empty-cell" colSpan={4}>No exchange rates saved.</td>
+                      <td className="crm-empty-cell" colSpan={5}>No exchange rates saved.</td>
                     </tr>
                   ) : null}
                 </tbody>

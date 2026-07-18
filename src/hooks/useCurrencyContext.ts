@@ -14,6 +14,11 @@ export function useCurrencyContext() {
   });
 }
 
+/**
+ * Application money display standard:
+ * - formatInBase / formatMoney always include a currency code with the amount
+ * - Money workspaces also show CurrencyBadge in the page header (base currency)
+ */
 export function useMoneyFormatter() {
   const currencyQuery = useCurrencyContext();
   const baseCurrency = currencyQuery.data?.baseCurrencyCode ?? "KES";
@@ -23,11 +28,19 @@ export function useMoneyFormatter() {
     baseCurrency,
     ratesToBase,
     defaultContractCurrency: currencyQuery.data?.defaultContractCurrencyCode ?? baseCurrency,
+    /** Format in the amount's own currency (includes currency code). */
     formatMoney: (value: number | null | undefined, currencyCode?: string | null) =>
       formatMoney(value, currencyCode ?? baseCurrency),
     toBase: (value: number | null | undefined, currencyCode?: string | null) =>
       convertToBase(value, currencyCode, baseCurrency, ratesToBase),
+    /**
+     * Convert to org base currency and format with currency code (e.g. "33.99M KES").
+     * Prefer this for registers, KPIs, detail fields, and workflow summaries.
+     */
     formatInBase: (value: number | null | undefined, currencyCode?: string | null) =>
+      formatMoney(convertToBase(value, currencyCode, baseCurrency, ratesToBase), baseCurrency),
+    /** Numeric-only base amount (no currency code) — use only for math / form defaults, not UI labels. */
+    formatInBaseAmount: (value: number | null | undefined, currencyCode?: string | null) =>
       formatAmount(convertToBase(value, currencyCode, baseCurrency, ratesToBase)),
     fromBase: (value: number | null | undefined, currencyCode?: string | null) =>
       convertFromBase(value, currencyCode, baseCurrency, ratesToBase)

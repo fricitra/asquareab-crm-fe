@@ -10,8 +10,10 @@ import {
   type ReferenceDataPayload
 } from "../api/reference-data";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
+import { nextListSort, type ListSortState } from "../lib/list-sort";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { ListPagination } from "../shared/ListPagination";
+import { SortableTh } from "../shared/SortableTh";
 
 type ReferenceModalMode = "value" | "category" | "group" | "edit" | null;
 
@@ -89,6 +91,10 @@ function modalTitle(mode: ReferenceModalMode) {
   return "New Reference Value";
 }
 
+function formatDate(value: string | null | undefined) {
+  return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
+}
+
 export function ReferenceDataPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
@@ -96,6 +102,7 @@ export function ReferenceDataPage() {
   const [level1Filter, setLevel1Filter] = useState("");
   const [activeOnly, setActiveOnly] = useState(false);
   const [page, setPage] = useState(1);
+  const [listSort, setListSort] = useState<ListSortState>({ sortBy: "createdAt", sortDir: "desc" });
   const [modalMode, setModalMode] = useState<ReferenceModalMode>(null);
   const [editingItem, setEditingItem] = useState<ReferenceDataItem | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -111,7 +118,7 @@ export function ReferenceDataPage() {
   });
 
   const referenceQuery = useQuery({
-    queryKey: ["reference-data", "management", search, categoryFilter, level1Filter, activeOnly, page],
+    queryKey: ["reference-data", "management", search, categoryFilter, level1Filter, activeOnly, page, listSort.sortBy, listSort.sortDir],
     queryFn: () =>
       listReferenceData({
         search,
@@ -119,10 +126,21 @@ export function ReferenceDataPage() {
         level1: level1Filter,
         activeOnly,
         page,
-        pageSize
+        pageSize,
+        sortBy: listSort.sortBy,
+        sortDir: listSort.sortDir
       }),
     staleTime: 10_000
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, categoryFilter, level1Filter, activeOnly, listSort.sortBy, listSort.sortDir]);
+
+  const onSortColumn = (column: string) => {
+    const preferDesc = column === "createdAt" || column === "order";
+    setListSort((current) => nextListSort(current, column, preferDesc ? "desc" : "asc"));
+  };
 
   const rows = referenceQuery.data?.items ?? [];
   const pagination = referenceQuery.data?.pagination ?? { page, pageSize, totalItems: 0, totalPages: 1 };
@@ -307,12 +325,13 @@ export function ReferenceDataPage() {
           <table className="crm-table crm-reference-table">
             <thead>
               <tr>
-                <th>Category</th>
-                <th>Group</th>
-                <th>Value Code</th>
-                <th>Value Name</th>
-                <th>Order</th>
-                <th>Status</th>
+                <SortableTh column="category" label="Category" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="group" label="Group" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="valueCode" label="Value Code" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="valueName" label="Value Name" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="order" label="Order" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="status" label="Status" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
+                <SortableTh column="createdAt" label="Created Date" onSort={onSortColumn} sortBy={listSort.sortBy} sortDir={listSort.sortDir} />
                 <th>Action</th>
               </tr>
             </thead>
@@ -332,6 +351,7 @@ export function ReferenceDataPage() {
                       {item.status}
                     </span>
                   </td>
+                  <td>{formatDate(item.createdAt)}</td>
                   <td>
                     <button className="crm-secondary-button crm-small-button" onClick={() => openModal("edit", item)} type="button">
                       Edit
@@ -341,7 +361,7 @@ export function ReferenceDataPage() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <td className="crm-empty-cell" colSpan={7}>
+                  <td className="crm-empty-cell" colSpan={8}>
                     No reference values found.
                   </td>
                 </tr>
