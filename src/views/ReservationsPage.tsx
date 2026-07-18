@@ -23,6 +23,7 @@ import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
 import { UnitPickerDialog } from "../shared/UnitPickerDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
+import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
 
 type ReservationFormValues = {
   opportunityId: string;
@@ -63,14 +64,21 @@ async function resolveUnitReservationPricing(unit: Unit) {
   try {
     const detail = await getUnit(unit.id);
     const sales = detail.catalogue?.salesInformation;
-    const amount = sales?.reservationAmount ?? sales?.approvedSellingPrice ?? detail.basePrice ?? unit.basePrice;
+    const listPrice = sales?.approvedSellingPrice ?? detail.basePrice ?? unit.basePrice;
+    const configuredDeposit = sales?.reservationAmount;
+    const amount =
+      configuredDeposit != null && configuredDeposit > 0
+        ? configuredDeposit
+        : listPrice == null
+          ? null
+          : Number((listPrice * 0.1).toFixed(2));
     return {
       amount: amount == null ? "" : String(amount),
       currencyCode: detail.currencyCode ?? unit.currencyCode ?? ""
     };
   } catch {
     return {
-      amount: unit.basePrice == null ? "" : String(unit.basePrice),
+      amount: unit.basePrice == null ? "" : String(Number((unit.basePrice * 0.1).toFixed(2))),
       currencyCode: unit.currencyCode ?? ""
     };
   }
@@ -144,6 +152,7 @@ export function ReservationsPage() {
   const [reservationDetailModalOpen, setReservationDetailModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+  const [actionNotes, setActionNotes] = useState("");
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
     title: "",
@@ -263,8 +272,9 @@ export function ReservationsPage() {
   });
 
   const cancelMutation = useMutation({
-    mutationFn: (reservationId: string) => cancelReservation(reservationId, "Cancelled from CRM workspace"),
+    mutationFn: ({ id, remarks }: { id: string; remarks: string }) => cancelReservation(id, remarks),
     onSuccess: (reservation) => {
+      setActionNotes("");
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
@@ -276,8 +286,9 @@ export function ReservationsPage() {
   });
 
   const approveMutation = useMutation({
-    mutationFn: (reservationId: string) => approveReservation(reservationId, "Reservation approved from CRM workspace"),
+    mutationFn: ({ id, remarks }: { id: string; remarks: string }) => approveReservation(id, remarks),
     onSuccess: (reservation) => {
+      setActionNotes("");
       void queryClient.invalidateQueries({ queryKey: ["reservations"] });
       void queryClient.invalidateQueries({ queryKey: ["reservation", reservation.id] });
       void queryClient.invalidateQueries({ queryKey: ["inventory", "units"] });
@@ -324,12 +335,34 @@ export function ReservationsPage() {
 
   const loadReservation = (reservationId: string) => {
     setSelectedReservationId(reservationId);
+    setActionNotes("");
     setReservationDetailModalOpen(true);
   };
 
   const closeReservationDetailModal = () => {
     setReservationDetailModalOpen(false);
     setSelectedReservationId(null);
+    setActionNotes("");
+  };
+
+  const resolveActionNotes = (existingRemarks?: string | null) => {
+    const typed = actionNotes.trim();
+    if (typed) return typed;
+    const existing = existingRemarks?.trim();
+    return existing || "";
+  };
+
+  const requireActionNotes = (existingRemarks: string | null | undefined, actionLabel: string) => {
+    const notes = resolveActionNotes(existingRemarks);
+    if (!notes) {
+      showNotice(
+        "Quick Notes Required",
+        `Enter a short note before ${actionLabel}. Existing reservation remarks can also be used if already recorded.`,
+        "error"
+      );
+      return null;
+    }
+    return notes;
   };
 
   useModalEscape(reservationDetailModalOpen, closeReservationDetailModal, { disabled: noticeDialog.open });
@@ -560,7 +593,83 @@ export function ReservationsPage() {
                     {selectedReservation.reservationStatus.name ?? selectedReservation.status}
                   </span>
                 </div>
+                <SalesPipelineStrip current="reservation" />
                 <WorkflowTracker steps={reservationWorkflowSteps(selectedReservation, formatInBase)} />
+                {selectedReservation.reservationStatus.code === "APPROVED" && selectedReservation.opportunity.id ? (
+                  <ContinuePanel
+                    nowLabel="Approved"
+                    nowSummary="Reservation chapter is complete. Unit remains held for this buyer."
+                    nextLabel={MOVE_TO_CTA.proposal}
+                    nextSummary="Create the commercial proposal from this reservation."
+                    dataNeeded="Proposal price, discount, and validity."
+                    notesHint={
+                      selectedReservation.remarks?.trim()
+                        ? "Existing remarks will be used if you leave this blank."
+                        : "Required before moving to proposal."
+                    }
+                    notesPlaceholder="Why is this ready for proposal? Buyer confirmation, commercial points…"
+                    notesValue={actionNotes}
+                    onNotesChange={setActionNotes}
+                  >
+                    <button
+                      className="crm-primary-button crm-fit-button"
+                      onClick={() => {
+                        const notes = requireActionNotes(selectedReservation.remarks, MOVE_TO_CTA.proposal);
+                        if (!notes || !selectedReservation.opportunity.id) return;
+                        setActionNotes("");
+                        navigate(`/proposals?createFor=${selectedReservation.opportunity.id}`, {
+                          state: {
+                            fromReservation: selectedReservation.reservationNo,
+                            handoffNotes: notes
+                          }
+                        });
+                      }}
+                      type="button"
+                    >
+                      {MOVE_TO_CTA.proposal}
+                    </button>
+                  </ContinuePanel>
+                ) : selectedReservation.reservationStatus.code === "REQUESTED" ? (
+                  <ContinuePanel
+                    nowLabel="Requested"
+                    nowSummary="Reservation is waiting for approval."
+                    nextLabel="Approve Reservation"
+                    nextSummary="Approve to continue toward proposal, or cancel to release the unit."
+                    notesHint={
+                      selectedReservation.remarks?.trim()
+                        ? "Existing remarks will be used if you leave this blank."
+                        : "Required before approve or cancel."
+                    }
+                    notesPlaceholder="Approval / review notes…"
+                    notesValue={actionNotes}
+                    onNotesChange={setActionNotes}
+                  >
+                    <button
+                      className="crm-secondary-button crm-fit-button"
+                      disabled={!selectedReservation.isActive || cancelMutation.isPending}
+                      onClick={() => {
+                        const notes = requireActionNotes(selectedReservation.remarks, "cancelling the reservation");
+                        if (!notes) return;
+                        cancelMutation.mutate({ id: selectedReservation.id, remarks: notes });
+                      }}
+                      type="button"
+                    >
+                      {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
+                    </button>
+                    <button
+                      className="crm-primary-button crm-fit-button"
+                      disabled={!selectedReservation.isActive || approveMutation.isPending}
+                      onClick={() => {
+                        const notes = requireActionNotes(selectedReservation.remarks, "approving the reservation");
+                        if (!notes) return;
+                        approveMutation.mutate({ id: selectedReservation.id, remarks: notes });
+                      }}
+                      type="button"
+                    >
+                      {approveMutation.isPending ? "Approving..." : "Approve Reservation"}
+                    </button>
+                  </ContinuePanel>
+                ) : null}
 
                 <dl className="crm-detail-list">
                   <div>
@@ -588,59 +697,6 @@ export function ReservationsPage() {
                     <dd>{formatDate(selectedReservation.expiryDate)}</dd>
                   </div>
                 </dl>
-
-                <section className="crm-opportunity-actions">
-                  <section className="crm-opportunity-action-card crm-opportunity-action-card-wide">
-                    <div className="crm-opportunity-action-card-header">
-                      <h4>Reservation Actions</h4>
-                      <p className="crm-muted-text">
-                        Approve to continue toward proposal, cancel to release the unit, or create a proposal once approved.
-                      </p>
-                    </div>
-                    <div className="crm-opportunity-action-card-footer">
-                      <button
-                        className="crm-secondary-button crm-opportunity-action-button"
-                        disabled={!selectedReservation.isActive || cancelMutation.isPending}
-                        onClick={() => cancelMutation.mutate(selectedReservation.id)}
-                        type="button"
-                      >
-                        {cancelMutation.isPending ? "Cancelling..." : "Cancel Reservation"}
-                      </button>
-                      {selectedReservation.reservationStatus.code === "APPROVED" &&
-                      selectedReservation.opportunity.id ? (
-                        <button
-                          className="crm-primary-button crm-opportunity-action-button"
-                          onClick={() =>
-                            navigate(`/proposals?createFor=${selectedReservation.opportunity.id}`, {
-                              state: { fromReservation: selectedReservation.reservationNo }
-                            })
-                          }
-                          type="button"
-                        >
-                          Create Proposal
-                        </button>
-                      ) : (
-                        <button
-                          className="crm-primary-button crm-opportunity-action-button"
-                          disabled={
-                            !selectedReservation.isActive ||
-                            selectedReservation.reservationStatus.code === "APPROVED" ||
-                            selectedReservation.reservationStatus.code === "CANCELLED" ||
-                            approveMutation.isPending
-                          }
-                          onClick={() => approveMutation.mutate(selectedReservation.id)}
-                          type="button"
-                        >
-                          {selectedReservation.reservationStatus.code === "APPROVED"
-                            ? "Approved"
-                            : approveMutation.isPending
-                              ? "Approving..."
-                              : "Approve Reservation"}
-                        </button>
-                      )}
-                    </div>
-                  </section>
-                </section>
 
                 <section className="crm-activity-list">
                   <h4>Remarks</h4>

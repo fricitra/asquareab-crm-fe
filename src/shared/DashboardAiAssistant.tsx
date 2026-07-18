@@ -128,7 +128,7 @@ export function DashboardAiAssistant({ open, onClose, view, period }: DashboardA
             <p className="crm-eyebrow">Dashboard AI</p>
             <h3>Sales Intelligence Assistant</h3>
             <p className="crm-muted-text">
-              {view === "operations" ? "Sales Operations Overview" : "Sales Stage Pipeline View"} ·{" "}
+              {view === "operations" ? "Sales Operations Overview" : "Lead & Customer Insights"} ·{" "}
               {insightsQuery.data?.periodLabel ?? "Current period"}
             </p>
           </div>
@@ -193,7 +193,7 @@ export function DashboardAiAssistant({ open, onClose, view, period }: DashboardA
           <input
             className="crm-input"
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Ask about progress, pipeline, buyers, inventory, or next actions..."
+            placeholder="Ask about progress, audience demand, buyers, inventory, or next actions..."
             value={draft}
           />
           <button className="crm-primary-button crm-fit-button" disabled={!draft.trim() || chatMutation.isPending} type="submit">

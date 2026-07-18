@@ -420,8 +420,8 @@ export function InventoryPage() {
   const [unitPage, setUnitPage] = useState(1);
   const [productPage, setProductPage] = useState(1);
   const [availabilityPage, setAvailabilityPage] = useState(1);
-  // null = not yet initialized (defaults to AVAILABLE once statuses load); "" = all statuses
-  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState<string | null>(null);
+  // "" = All statuses (default for Unit Status Register)
+  const [availabilityStatusFilter, setAvailabilityStatusFilter] = useState("");
   const [unitModalOpen, setUnitModalOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -574,7 +574,11 @@ export function InventoryPage() {
         limit: pageSize,
         offset: (availabilityPage - 1) * pageSize
       }),
-    enabled: availabilityStatusFilter !== null,
+    staleTime: 10_000
+  });
+  const availabilitySummaryQuery = useQuery({
+    queryKey: ["inventory", "availability-summary"],
+    queryFn: () => listUnits({ limit: 1, offset: 0 }),
     staleTime: 10_000
   });
 
@@ -620,13 +624,6 @@ export function InventoryPage() {
   const selectedUnit = selectedUnitQuery.data;
   const activeUnitDetailTab = unitDetailTabs.find((tab) => tab.id === unitDetailTab) ?? unitDetailTabs[0];
 
-  // Default the Availability tab to the AVAILABLE status once reference data loads
-  useEffect(() => {
-    if (availabilityStatusFilter !== null || availabilityStatuses.length === 0) return;
-    const availableStatus = availabilityStatuses.find((item) => item.level2Code === "AVAILABLE");
-    setAvailabilityStatusFilter(availableStatus?.id ?? "");
-  }, [availabilityStatusFilter, availabilityStatuses]);
-
   const stats = useMemo(() => {
     const unitSummary = unitsQuery.data?.summary;
     return {
@@ -638,6 +635,30 @@ export function InventoryPage() {
       value: unitSummary?.value ?? 0
     };
   }, [allProductsQuery.data?.pagination.total, productsQuery.data?.pagination.total, projectsQuery.data?.pagination.total, unitsQuery.data]);
+
+  const availabilityStats = useMemo(() => {
+    const summary = availabilitySummaryQuery.data?.summary;
+    const byStatus = summary?.byStatus ?? [];
+    const selectedStatus = availabilityStatuses.find((item) => item.id === availabilityStatusFilter) ?? null;
+    const selectedBreakdown = selectedStatus
+      ? byStatus.find((item) => item.code === selectedStatus.level2Code)
+      : null;
+    const selectedValue = availabilityStatusFilter
+      ? (selectedBreakdown?.value ?? 0)
+      : (summary?.value ?? 0);
+
+    return {
+      total: summary?.total ?? byStatus.reduce((sum, item) => sum + item.count, 0),
+      byStatus,
+      selectedStatusCode: selectedStatus?.level2Code ?? null,
+      selectedValue
+    };
+  }, [availabilityStatusFilter, availabilityStatuses, availabilitySummaryQuery.data?.summary]);
+
+  const selectAvailabilityStatus = (statusRefId: string) => {
+    setAvailabilityStatusFilter(statusRefId);
+    setAvailabilityPage(1);
+  };
 
   const refreshInventory = (successMessage: string) => {
     setMessage(successMessage);
@@ -1158,12 +1179,52 @@ export function InventoryPage() {
         </div>
       </section>
 
-      <section className="crm-grid crm-metric-grid">
-        <article className="crm-card"><h3>Projects</h3><div className="crm-kpi">{stats.projects}</div></article>
-        <article className="crm-card"><h3>Products</h3><div className="crm-kpi">{stats.products}</div></article>
-        <article className="crm-card"><h3>Units</h3><div className="crm-kpi">{stats.units}</div></article>
-        <article className="crm-card"><h3>Available</h3><div className="crm-kpi">{stats.available}</div></article>
-        <article className="crm-card"><h3>Value</h3><div className="crm-kpi">{formatInBase(stats.value)}</div></article>
+      <section className={`crm-grid crm-metric-grid${activeTab === "availability" ? " crm-unit-status-metric-grid" : ""}`}>
+        {activeTab === "availability" ? (
+          <>
+            <button
+              className={`crm-card crm-metric-card-button${!availabilityStatusFilter ? " is-selected" : ""}`}
+              onClick={() => selectAvailabilityStatus("")}
+              type="button"
+            >
+              <h3>All</h3>
+              <div className="crm-kpi">{availabilityStats.total}</div>
+            </button>
+            {availabilityStatuses.map((status) => {
+              const count = availabilityStats.byStatus.find((item) => item.code === status.level2Code)?.count ?? 0;
+              const isSelected = availabilityStatusFilter === status.id;
+              return (
+                <button
+                  aria-pressed={isSelected}
+                  className={`crm-card crm-metric-card-button${isSelected ? " is-selected" : ""}`}
+                  key={status.id}
+                  onClick={() => selectAvailabilityStatus(status.id)}
+                  type="button"
+                >
+                  <h3>{status.level2Name}</h3>
+                  <div className="crm-kpi">{count}</div>
+                </button>
+              );
+            })}
+            <article className="crm-card crm-metric-value-card is-selected">
+              <h3>
+                Value
+                {availabilityStatusFilter
+                  ? ` · ${availabilityStatuses.find((status) => status.id === availabilityStatusFilter)?.level2Name ?? "Selected"}`
+                  : " · All"}
+              </h3>
+              <div className="crm-kpi">{formatInBase(availabilityStats.selectedValue)}</div>
+            </article>
+          </>
+        ) : (
+          <>
+            <article className="crm-card"><h3>Projects</h3><div className="crm-kpi">{stats.projects}</div></article>
+            <article className="crm-card"><h3>Products</h3><div className="crm-kpi">{stats.products}</div></article>
+            <article className="crm-card"><h3>Units</h3><div className="crm-kpi">{stats.units}</div></article>
+            <article className="crm-card"><h3>Available</h3><div className="crm-kpi">{stats.available}</div></article>
+            <article className="crm-card"><h3>Value</h3><div className="crm-kpi">{formatInBase(stats.value)}</div></article>
+          </>
+        )}
       </section>
 
       {message ? <div className={message.includes("could not") ? "crm-error-banner" : "crm-info-banner"}>{message}</div> : null}
@@ -1173,7 +1234,7 @@ export function InventoryPage() {
           { id: "projects", label: "Projects" },
           { id: "products", label: "Products" },
           { id: "units", label: "Units" },
-          { id: "availability", label: "Availability" }
+          { id: "availability", label: "Unit Status" }
         ].map((tab) => (
           <button className={`crm-tab-button${activeTab === tab.id ? " is-active" : ""}`} key={tab.id} onClick={() => setActiveTab(tab.id as InventoryTab)} type="button">
             {tab.label}
@@ -1304,19 +1365,18 @@ export function InventoryPage() {
           <section className="crm-panel crm-unit-register-panel">
             <div className="crm-panel-header">
               <div>
-                <h3>Availability Register</h3>
-                <p className="crm-muted-text">Filtered stock view by availability status. Manage unit details from the Units tab.</p>
+                <h3>Unit Status Register</h3>
+                <p className="crm-muted-text">View units by status across the full stock. Manage unit details from the Units tab.</p>
               </div>
               <div className="crm-unit-register-actions">
                 <select
                   className="crm-input"
                   onChange={(event) => {
-                    setAvailabilityStatusFilter(event.target.value);
-                    setAvailabilityPage(1);
+                    selectAvailabilityStatus(event.target.value);
                   }}
-                  value={availabilityStatusFilter ?? ""}
+                  value={availabilityStatusFilter}
                 >
-                  <option value="">All statuses</option>
+                  <option value="">All</option>
                   {availabilityStatuses.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.level2Name}
@@ -1352,7 +1412,7 @@ export function InventoryPage() {
                   {availabilityRows.length === 0 ? (
                     <tr>
                       <td className="crm-empty-cell" colSpan={7}>
-                        {availabilityQuery.isLoading ? "Loading availability..." : "No units found for this status."}
+                        {availabilityQuery.isLoading ? "Loading unit status..." : "No units found for this status."}
                       </td>
                     </tr>
                   ) : null}

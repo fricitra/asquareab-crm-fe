@@ -324,6 +324,14 @@ export async function listProjects(params?: ListQueryParams) {
   return response.data;
 }
 
+export type UnitAvailabilitySummary = {
+  total: number;
+  available: number;
+  reserved: number;
+  value: number;
+  byStatus: Array<{ code: string; count: number; value: number }>;
+};
+
 export async function listUnits(params?: ListQueryParams & { availabilityStatusRefId?: string }) {
   const query: Record<string, string | number> = { ...(buildListQueryParams(params) ?? {}) };
   if (params?.availabilityStatusRefId) {
@@ -332,7 +340,7 @@ export async function listUnits(params?: ListQueryParams & { availabilityStatusR
   const response = await apiClient.get<{
     items: Unit[];
     pagination: { limit: number; offset: number; total: number };
-    summary?: { available: number; reserved: number; value: number };
+    summary?: UnitAvailabilitySummary;
   }>("/inventory/units", {
     params: Object.keys(query).length ? query : undefined
   });

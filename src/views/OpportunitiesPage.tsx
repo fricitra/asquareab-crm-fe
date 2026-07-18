@@ -8,6 +8,7 @@ import {
   getOpportunity,
   listOpportunities,
   scheduleSiteVisit,
+  updateSiteVisit,
   type ChangeOpportunityStagePayload,
   type Opportunity,
   type OpportunityDetail
@@ -26,6 +27,7 @@ import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
 import { UnitPickerDialog } from "../shared/UnitPickerDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
+import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
 
 type StageFormValues = {
   opportunityStageRefId: string;
@@ -39,9 +41,40 @@ type NoteFormValues = {
 
 type SiteVisitFormValues = {
   visitDate: string;
+  visitType: "IN_PERSON" | "VIRTUAL";
   proposedUnitCode: string;
   remarks: string;
 };
+
+type CompleteVisitFormValues = {
+  visitId: string;
+  outcomeNotes: string;
+};
+
+function toFormDateTime(value: string | null | undefined) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
+function visitTypeLabel(visitType: string | null | undefined) {
+  return visitType === "VIRTUAL" ? "Virtual" : "In-person";
+}
+
+function visitStatusLabel(status: string | null | undefined) {
+  switch (status) {
+    case "COMPLETED":
+      return "Completed";
+    case "CANCELLED":
+      return "Cancelled";
+    case "NO_SHOW":
+      return "No show";
+    default:
+      return "Scheduled";
+  }
+}
 
 type LostFormValues = {
   lostReasonRefId: string;
@@ -142,11 +175,19 @@ function opportunityWorkflowSteps(
       summary:
         history?.remarks ??
         (isCurrent
-          ? stageName === "Reservation Ready" && !hasActiveReservation
+          ? stageName === "Qualified" || stageName === "Open"
+            ? "Schedule an in-person or virtual site visit to continue. Manual move to Site Visit is not used."
+            : stageName === "Site Visit"
+              ? "Complete the site visit with outcome notes before moving to Negotiation."
+            : stageName === "Reservation Ready" && !hasActiveReservation
             ? "Select an available unit and create the reservation from the action below."
             : opportunity.remarks
           : forwardIndex === currentForwardIndex + 1
-            ? "This is the next suggested workflow stage."
+            ? stageName === "Site Visit"
+              ? "Schedule a site visit (in-person or virtual) to enter this stage."
+              : stageName === "Negotiation"
+                ? "Complete at least one site visit, then move to Negotiation."
+              : "This is the next suggested workflow stage."
             : null),
       details: [
         { label: "Probability", value: history?.probabilityPercent ?? (isCurrent ? opportunity.probabilityPercent : null) },
@@ -185,29 +226,16 @@ function opportunityWorkflowSteps(
       summary: hasActiveReservation
         ? `Unit ${activeReservation?.unit.unitCode ?? "-"} reserved (${activeReservation?.reservationNo ?? "pending"}).`
         : currentForwardIndex >= reservationReadyIndex
-          ? "Create a reservation for this opportunity using the Create Reservation action below."
+          ? `Create a reservation using ${MOVE_TO_CTA.reservation}.`
           : "This becomes available after Reservation Ready.",
       details: [
-        { label: "Action", value: hasActiveReservation ? "View / approve reservation" : "Create Reservation" },
+        { label: "Action", value: hasActiveReservation ? "View / approve reservation" : MOVE_TO_CTA.reservation },
         { label: "Reservation", value: activeReservation?.reservationNo },
         { label: "Unit", value: activeReservation?.unit.unitCode ?? opportunity.proposedUnitCode },
         { label: "Inventory Result", value: hasActiveReservation ? "Unit is Reserved" : "Selected unit becomes Reserved" }
       ]
     },
     buildForwardStageStep("Proposal", opportunityForwardStages.indexOf("Proposal")),
-    {
-      id: "Won",
-      title: "Won",
-      status: isLost ? "blocked" : currentStageName === "Proposal" && hasActiveReservation ? "next" : "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Winning/closure should happen after reservation, proposal acceptance, and contract baseline.",
-      details: [
-        { label: "Current Package", value: "Reservation integrated; contract in later package" },
-        { label: "Future Package", value: "Contract, KYC, collections, and ERP handoff" }
-      ]
-    },
     {
       id: "Lost",
       title: "Lost",
@@ -262,6 +290,8 @@ export function OpportunitiesPage() {
   const [unitPickerOpen, setUnitPickerOpen] = useState(false);
   const [reservationModalOpen, setReservationModalOpen] = useState(false);
   const [reservationUnitPickerOpen, setReservationUnitPickerOpen] = useState(false);
+  const [actionNotes, setActionNotes] = useState("");
+  const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
     title: "",
@@ -364,8 +394,16 @@ export function OpportunitiesPage() {
   const siteVisitForm = useForm<SiteVisitFormValues>({
     defaultValues: {
       visitDate: "",
+      visitType: "IN_PERSON",
       proposedUnitCode: "",
       remarks: ""
+    }
+  });
+
+  const completeVisitForm = useForm<CompleteVisitFormValues>({
+    defaultValues: {
+      visitId: "",
+      outcomeNotes: ""
     }
   });
 
@@ -415,7 +453,7 @@ export function OpportunitiesPage() {
       const stageName = opportunity.opportunityStage.name ?? "updated stage";
       if (stageName === "Proposal") {
         showNotice("Stage Updated", `Opportunity moved to ${stageName}. Opening proposal form.`, "success");
-        openProposalHandoff(opportunity.id, opportunity.opportunityNo);
+        openProposalHandoff(opportunity.id, opportunity.opportunityNo, variables.payload.remarks);
         return;
       }
 
@@ -442,17 +480,65 @@ export function OpportunitiesPage() {
   });
 
   const siteVisitMutation = useMutation({
-    mutationFn: ({ id, values }: { id: string; values: SiteVisitFormValues }) =>
-      scheduleSiteVisit(id, new Date(values.visitDate).toISOString(), pickString(values.proposedUnitCode), pickString(values.remarks)),
+    mutationFn: ({ id, values }: { id: string; values: SiteVisitFormValues }) => {
+      const payload = {
+        visitDate: new Date(values.visitDate).toISOString(),
+        visitType: values.visitType,
+        proposedUnitCode: pickString(values.proposedUnitCode),
+        remarks: pickString(values.remarks)
+      };
+      if (editingVisitId) {
+        return updateSiteVisit(id, editingVisitId, payload);
+      }
+      return scheduleSiteVisit(id, payload);
+    },
     onSuccess: (opportunity) => {
-      siteVisitForm.reset();
+      const wasEdit = Boolean(editingVisitId);
+      setEditingVisitId(null);
+      siteVisitForm.reset({ visitDate: "", visitType: "IN_PERSON", proposedUnitCode: "", remarks: "" });
       void queryClient.invalidateQueries({ queryKey: ["opportunity", opportunity.id] });
       queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
-      showNotice("Site Visit Scheduled", "Site visit was scheduled successfully.", "success");
+      showNotice(
+        wasEdit ? "Site Visit Updated" : "Site Visit Scheduled",
+        wasEdit
+          ? "Site visit details were updated successfully."
+          : "Site visit was scheduled successfully. The opportunity moves to Site Visit when this is the first visit.",
+        "success"
+      );
     },
     onError: (error) => {
-      const message = getApiErrorMessage(error, "Site visit could not be scheduled.");
+      const message = getApiErrorMessage(error, "Site visit could not be saved.");
       showNotice("Site Visit Failed", message, "error");
+    }
+  });
+
+  const completeVisitMutation = useMutation({
+    mutationFn: ({
+      id,
+      visitId,
+      outcomeNotes
+    }: {
+      id: string;
+      visitId: string;
+      outcomeNotes: string;
+    }) =>
+      updateSiteVisit(id, visitId, {
+        status: "COMPLETED",
+        remarks: outcomeNotes
+      }),
+    onSuccess: (opportunity) => {
+      completeVisitForm.reset({ visitId: "", outcomeNotes: "" });
+      void queryClient.invalidateQueries({ queryKey: ["opportunity", opportunity.id] });
+      queryClient.setQueryData(["opportunity", opportunity.id], opportunity);
+      showNotice(
+        "Site Visit Completed",
+        "Visit outcome was saved. You can now move to Negotiation.",
+        "success"
+      );
+    },
+    onError: (error) => {
+      const message = getApiErrorMessage(error, "Site visit could not be completed.");
+      showNotice("Complete Visit Failed", message, "error");
     }
   });
 
@@ -495,9 +581,26 @@ export function OpportunitiesPage() {
   const hasActiveOpportunityReservation = Boolean(activeOpportunityReservation);
   const isSelectedOpportunityLost =
     selectedOpportunity?.status === "LOST" || selectedOpportunity?.opportunityStage.name === "Lost" || Boolean(selectedOpportunity?.lostReason.id);
+  const hasCompletedSiteVisit = (selectedOpportunity?.siteVisits ?? []).some((visit) => visit.status === "COMPLETED");
+  const scheduledSiteVisits = (selectedOpportunity?.siteVisits ?? []).filter((visit) => visit.status === "SCHEDULED");
   const rawNextStageName = isSelectedOpportunityLost ? null : nextOpportunityStageName(selectedOpportunity?.opportunityStage.name);
   const nextStageName =
-    rawNextStageName === "Proposal" && !hasActiveOpportunityReservation ? null : rawNextStageName;
+    rawNextStageName === "Proposal" && !hasActiveOpportunityReservation
+      ? null
+      : rawNextStageName === "Site Visit"
+        ? null
+        : rawNextStageName === "Negotiation" &&
+            selectedOpportunity?.opportunityStage.name === "Site Visit" &&
+            !hasCompletedSiteVisit
+          ? null
+          : rawNextStageName;
+  const awaitsSiteVisitSchedule =
+    !isSelectedOpportunityLost &&
+    (selectedOpportunity?.opportunityStage.name === "Open" || selectedOpportunity?.opportunityStage.name === "Qualified");
+  const awaitsSiteVisitCompletion =
+    !isSelectedOpportunityLost &&
+    selectedOpportunity?.opportunityStage.name === "Site Visit" &&
+    !hasCompletedSiteVisit;
   const nextStage = (stagesQuery.data ?? []).find((stage) => stage.level2Name === nextStageName);
   const lostStage = (stagesQuery.data ?? []).find((stage) => stage.level2Name === "Lost");
 
@@ -511,6 +614,20 @@ export function OpportunitiesPage() {
     });
   }, [nextStage, selectedOpportunity?.id, selectedOpportunity, stageForm]);
 
+  useEffect(() => {
+    if (!awaitsSiteVisitCompletion) return;
+    const preferred =
+      scheduledSiteVisits[0] ??
+      selectedOpportunity?.siteVisits.find((visit) => visit.status !== "COMPLETED") ??
+      selectedOpportunity?.siteVisits[0];
+    if (!preferred) return;
+    if (completeVisitForm.getValues("visitId")) return;
+    completeVisitForm.reset({
+      visitId: preferred.id,
+      outcomeNotes: preferred.remarks ?? ""
+    });
+  }, [awaitsSiteVisitCompletion, completeVisitForm, scheduledSiteVisits, selectedOpportunity?.siteVisits]);
+
   const stats = useMemo(() => {
     const summary = opportunitiesQuery.data?.summary;
     return {
@@ -523,18 +640,40 @@ export function OpportunitiesPage() {
 
   const loadOpportunity = (opportunityId: string) => {
     setSelectedOpportunityId(opportunityId);
+    setActionNotes("");
     setOpportunityDetailModalOpen(true);
   };
 
   const closeOpportunityDetailModal = () => {
     setOpportunityDetailModalOpen(false);
     setSelectedOpportunityId(null);
+    setActionNotes("");
+    setEditingVisitId(null);
+    siteVisitForm.reset({ visitDate: "", visitType: "IN_PERSON", proposedUnitCode: "", remarks: "" });
+    completeVisitForm.reset({ visitId: "", outcomeNotes: "" });
   };
 
-  const openProposalHandoff = (opportunityId: string, opportunityNo?: string | null) => {
+  const requireActionNotes = (existingRemarks: string | null | undefined, actionLabel: string) => {
+    const typed = actionNotes.trim();
+    const notes = typed || existingRemarks?.trim() || "";
+    if (!notes) {
+      showNotice(
+        "Quick Notes Required",
+        `Enter a short note before ${actionLabel}. Existing opportunity remarks can also be used if already recorded.`,
+        "error"
+      );
+      return null;
+    }
+    return notes;
+  };
+
+  const openProposalHandoff = (opportunityId: string, opportunityNo?: string | null, handoffNotes?: string) => {
     closeOpportunityDetailModal();
     navigate(`/proposals?createFor=${opportunityId}`, {
-      state: { fromOpportunity: opportunityNo ?? undefined }
+      state: {
+        fromOpportunity: opportunityNo ?? undefined,
+        ...(handoffNotes ? { handoffNotes } : {})
+      }
     });
   };
 
@@ -573,6 +712,23 @@ export function OpportunitiesPage() {
     }
 
     siteVisitMutation.mutate({ id: selectedOpportunityId, values });
+  });
+
+  const onCompleteVisitSubmit = completeVisitForm.handleSubmit((values) => {
+    if (!selectedOpportunityId) return;
+    if (!values.visitId) {
+      showNotice("Visit Required", "Select the site visit to complete.", "error");
+      return;
+    }
+    if (!values.outcomeNotes.trim()) {
+      showNotice("Outcome Notes Required", "Enter site visit outcome notes before marking the visit completed.", "error");
+      return;
+    }
+    completeVisitMutation.mutate({
+      id: selectedOpportunityId,
+      visitId: values.visitId,
+      outcomeNotes: values.outcomeNotes.trim()
+    });
   });
 
   const onLostSubmit = lostForm.handleSubmit((values) => {
@@ -765,9 +921,124 @@ export function OpportunitiesPage() {
                   </div>
                   <span className="crm-status-pill">{selectedOpportunity.opportunityStage.name ?? selectedOpportunity.status}</span>
                 </div>
+                <SalesPipelineStrip current="opportunity" />
                 <WorkflowTracker
                   steps={opportunityWorkflowSteps(selectedOpportunity, formatInBase, activeOpportunityReservation)}
                 />
+
+                {!isSelectedOpportunityLost && awaitsSiteVisitSchedule ? (
+                  <ContinuePanel
+                    nowLabel={selectedOpportunity.opportunityStage.name ?? "Opportunity"}
+                    nowSummary="Schedule the first site visit to continue. In-person and virtual visits both advance the stage."
+                    nextLabel="Schedule Visit & Continue"
+                    nextSummary="Creates the visit record and moves this opportunity to Site Visit."
+                    dataNeeded="Visit date/time and visit type (in-person or virtual). Unit is optional."
+                  />
+                ) : !isSelectedOpportunityLost && awaitsSiteVisitCompletion ? (
+                  <ContinuePanel
+                    nowLabel="Site Visit"
+                    nowSummary="A visit is scheduled. Capture outcome notes and mark it completed before negotiation."
+                    nextLabel="Complete Site Visit"
+                    nextSummary="Save visit comments and status as Completed, then Move to Negotiation becomes available."
+                    dataNeeded="Outcome notes for the selected visit."
+                  />
+                ) : !isSelectedOpportunityLost && selectedOpportunity.opportunityStage.name === "Proposal" && hasActiveOpportunityReservation ? (
+                  <ContinuePanel
+                    nowLabel="Proposal stage"
+                    nowSummary={`Active reservation on unit ${activeOpportunityReservation?.unit.unitCode ?? "-"}.`}
+                    nextLabel={MOVE_TO_CTA.proposal}
+                    nextSummary="Open the proposal form with reservation pricing pre-filled."
+                    notesHint={
+                      selectedOpportunity.remarks?.trim()
+                        ? "Existing remarks will be used if you leave this blank."
+                        : "Required before moving to proposal."
+                    }
+                    notesPlaceholder="Why is this ready for proposal? Buyer confirmation, commercial points…"
+                    notesValue={actionNotes}
+                    onNotesChange={setActionNotes}
+                  >
+                    <button
+                      className="crm-secondary-button crm-fit-button"
+                      onClick={() => navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)}
+                      type="button"
+                    >
+                      View Reservation
+                    </button>
+                    <button
+                      className="crm-primary-button crm-fit-button"
+                      onClick={() => {
+                        const notes = requireActionNotes(selectedOpportunity.remarks, MOVE_TO_CTA.proposal);
+                        if (!notes) return;
+                        openProposalHandoff(selectedOpportunity.id, selectedOpportunity.opportunityNo, notes);
+                      }}
+                      type="button"
+                    >
+                      {MOVE_TO_CTA.proposal}
+                    </button>
+                  </ContinuePanel>
+                ) : !isSelectedOpportunityLost && selectedOpportunity.opportunityStage.name === "Reservation Ready" ? (
+                  hasActiveOpportunityReservation ? (
+                    <ContinuePanel
+                      nowLabel="Reservation created"
+                      nowSummary={`${activeOpportunityReservation?.reservationNo} · Unit ${activeOpportunityReservation?.unit.unitCode ?? "-"} is reserved.`}
+                      nextLabel={nextStageName ? `Move to ${nextStageName}` : MOVE_TO_CTA.proposal}
+                      nextSummary="Approve the reservation if needed, then continue to proposal."
+                      notesHint={
+                        selectedOpportunity.remarks?.trim()
+                          ? "Existing remarks will be used if you leave this blank."
+                          : "Required before moving to the next stage."
+                      }
+                      notesPlaceholder="Stage move notes…"
+                      notesValue={actionNotes}
+                      onNotesChange={setActionNotes}
+                    >
+                      <button
+                        className="crm-secondary-button crm-fit-button"
+                        onClick={() => navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)}
+                        type="button"
+                      >
+                        View Reservation
+                      </button>
+                      {nextStageName && nextStage ? (
+                        <button
+                          className="crm-primary-button crm-fit-button"
+                          disabled={stageMutation.isPending}
+                          onClick={() => {
+                            if (!selectedOpportunityId || !nextStage) return;
+                            const notes = requireActionNotes(
+                              selectedOpportunity.remarks,
+                              `moving to ${nextStageName}`
+                            );
+                            if (!notes) return;
+                            stageMutation.mutate({
+                              id: selectedOpportunityId,
+                              payload: {
+                                opportunityStageRefId: nextStage.id,
+                                probabilityPercent: pickNumber(suggestedProbability(nextStage.level2Name)),
+                                remarks: notes
+                              }
+                            });
+                          }}
+                          type="button"
+                        >
+                          {stageMutation.isPending ? "Moving..." : `Move to ${nextStageName}`}
+                        </button>
+                      ) : null}
+                    </ContinuePanel>
+                  ) : (
+                    <ContinuePanel
+                      nowLabel="Reservation Ready"
+                      nowSummary="Select an available unit and hold it for this buyer."
+                      nextLabel={MOVE_TO_CTA.reservation}
+                      nextSummary="Creates the reservation and blocks the unit."
+                      dataNeeded="Available unit, reservation amount, and expiry."
+                    >
+                      <button className="crm-primary-button crm-fit-button" onClick={openReservationModal} type="button">
+                        {MOVE_TO_CTA.reservation}
+                      </button>
+                    </ContinuePanel>
+                  )
+                ) : null}
 
                 <dl className="crm-detail-list">
                   <div>
@@ -790,99 +1061,140 @@ export function OpportunitiesPage() {
 
                 <section className="crm-opportunity-actions">
                   <div className="crm-opportunity-actions-primary">
-                    {selectedOpportunity.opportunityStage.name === "Proposal" && !isSelectedOpportunityLost && hasActiveOpportunityReservation ? (
-                      <section className="crm-opportunity-action-card crm-opportunity-action-card-wide">
+                    {awaitsSiteVisitSchedule ? (
+                      <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onSiteVisitSubmit}>
                         <div className="crm-opportunity-action-card-header">
-                          <h4>Create Proposal</h4>
+                          <h4>{editingVisitId ? "Update Site Visit" : "1. Schedule Visit & Continue"}</h4>
                           <p className="crm-muted-text">
-                            Opportunity is at Proposal stage with an active reservation on unit{" "}
-                            {activeOpportunityReservation?.unit.unitCode ?? "-"}. Open the proposal form with pricing pre-filled.
+                            Choose in-person or virtual. The first scheduled visit moves this opportunity to Site Visit. More visits can be added later.
                           </p>
+                        </div>
+                        <div className="crm-opportunity-action-card-fields crm-opportunity-visit-fields">
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Type</span>
+                            <select className="crm-input" {...siteVisitForm.register("visitType")}>
+                              <option value="IN_PERSON">In-person</option>
+                              <option value="VIRTUAL">Virtual</option>
+                            </select>
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Date</span>
+                            <Controller
+                              control={siteVisitForm.control}
+                              name="visitDate"
+                              render={({ field }) => (
+                                <DateTimeField
+                                  className="crm-datetime-input"
+                                  onBlur={field.onBlur}
+                                  onChange={field.onChange}
+                                  ref={field.ref}
+                                  value={field.value}
+                                />
+                              )}
+                            />
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Proposed Unit</span>
+                            <div className="crm-opportunity-unit-picker-row">
+                              <input type="hidden" {...siteVisitForm.register("proposedUnitCode")} />
+                              <input
+                                className="crm-input"
+                                placeholder="Optional — choose from available units"
+                                readOnly
+                                value={siteVisitForm.watch("proposedUnitCode")}
+                              />
+                              <button
+                                className="crm-secondary-button crm-opportunity-unit-picker-button"
+                                onClick={() => setUnitPickerOpen(true)}
+                                type="button"
+                              >
+                                Choose Unit
+                              </button>
+                            </div>
+                            {siteVisitForm.watch("proposedUnitCode") ? (
+                              <button
+                                className="crm-inline-clear-button"
+                                onClick={() => siteVisitForm.setValue("proposedUnitCode", "")}
+                                type="button"
+                              >
+                                Clear selection
+                              </button>
+                            ) : null}
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Remarks</span>
+                            <textarea
+                              className="crm-input crm-textarea crm-opportunity-textarea"
+                              placeholder="Visit remarks"
+                              {...siteVisitForm.register("remarks")}
+                            />
+                          </label>
+                        </div>
+                        <div className="crm-opportunity-action-card-footer">
+                          {editingVisitId ? (
+                            <button
+                              className="crm-secondary-button crm-opportunity-action-button"
+                              onClick={() => {
+                                setEditingVisitId(null);
+                                siteVisitForm.reset({ visitDate: "", visitType: "IN_PERSON", proposedUnitCode: "", remarks: "" });
+                              }}
+                              type="button"
+                            >
+                              Cancel Edit
+                            </button>
+                          ) : null}
+                          <button className="crm-primary-button crm-opportunity-action-button" disabled={siteVisitMutation.isPending} type="submit">
+                            {siteVisitMutation.isPending
+                              ? "Saving..."
+                              : editingVisitId
+                                ? "Update Visit"
+                                : "Schedule Visit & Continue"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : awaitsSiteVisitCompletion ? (
+                      <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onCompleteVisitSubmit}>
+                        <div className="crm-opportunity-action-card-header">
+                          <h4>1. Complete Site Visit</h4>
+                          <p className="crm-muted-text">
+                            Record outcome notes and mark the visit Completed. Move to Negotiation unlocks after at least one completed visit.
+                          </p>
+                        </div>
+                        <div className="crm-opportunity-action-card-fields">
+                          <label className="crm-field">
+                            <span className="crm-label">Visit to Complete</span>
+                            <select className="crm-input" {...completeVisitForm.register("visitId")}>
+                              <option value="">Select visit</option>
+                              {(selectedOpportunity.siteVisits ?? []).map((visit) => (
+                                <option key={visit.id} value={visit.id}>
+                                  {formatDate(visit.visitDate)} · {visitTypeLabel(visit.visitType)} · {visitStatusLabel(visit.status)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Outcome Notes</span>
+                            <textarea
+                              className="crm-input crm-textarea crm-opportunity-textarea"
+                              placeholder="What happened on the visit? Interest, objections, preferred unit, next commercial points..."
+                              {...completeVisitForm.register("outcomeNotes")}
+                            />
+                          </label>
                         </div>
                         <div className="crm-opportunity-action-card-footer">
                           <button
-                            className="crm-secondary-button crm-opportunity-action-button"
-                            onClick={() =>
-                              navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)
-                            }
-                            type="button"
-                          >
-                            View Reservation
-                          </button>
-                          <button
                             className="crm-primary-button crm-opportunity-action-button"
-                            onClick={() => openProposalHandoff(selectedOpportunity.id, selectedOpportunity.opportunityNo)}
-                            type="button"
+                            disabled={completeVisitMutation.isPending || (selectedOpportunity.siteVisits ?? []).length === 0}
+                            type="submit"
                           >
-                            Create Proposal
+                            {completeVisitMutation.isPending ? "Completing..." : "Complete Site Visit"}
                           </button>
                         </div>
-                      </section>
-                    ) : selectedOpportunity.opportunityStage.name === "Reservation Ready" && !isSelectedOpportunityLost ? (
-                      hasActiveOpportunityReservation ? (
-                        <section className="crm-opportunity-action-card crm-opportunity-action-card-wide">
-                          <div className="crm-opportunity-action-card-header">
-                            <h4>Reservation Created</h4>
-                            <p className="crm-muted-text">
-                              {activeOpportunityReservation?.reservationNo} · Unit{" "}
-                              {activeOpportunityReservation?.unit.unitCode ?? "-"} is reserved. Continue to Proposal when ready.
-                            </p>
-                          </div>
-                          <div className="crm-opportunity-action-card-footer">
-                            <button
-                              className="crm-secondary-button crm-opportunity-action-button"
-                              onClick={() =>
-                                navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)
-                              }
-                              type="button"
-                            >
-                              View Reservation
-                            </button>
-                            {nextStageName ? (
-                              <button
-                                className="crm-primary-button crm-opportunity-action-button"
-                                disabled={stageMutation.isPending}
-                                onClick={() => {
-                                  if (!selectedOpportunityId || !nextStage) return;
-                                  stageMutation.mutate({
-                                    id: selectedOpportunityId,
-                                    payload: {
-                                      opportunityStageRefId: nextStage.id,
-                                      probabilityPercent: pickNumber(suggestedProbability(nextStage.level2Name)),
-                                      remarks: "Moved to Proposal after unit reservation."
-                                    }
-                                  });
-                                }}
-                                type="button"
-                              >
-                                {stageMutation.isPending ? "Moving..." : `Move to ${nextStageName}`}
-                              </button>
-                            ) : null}
-                          </div>
-                        </section>
-                      ) : (
-                        <section className="crm-opportunity-action-card crm-opportunity-action-card-wide">
-                          <div className="crm-opportunity-action-card-header">
-                            <h4>Create Reservation</h4>
-                            <p className="crm-muted-text">
-                              This opportunity is reservation-ready. Select an available unit and create the reservation before moving to Proposal.
-                            </p>
-                          </div>
-                          <div className="crm-opportunity-action-card-footer">
-                            <button
-                              className="crm-primary-button crm-opportunity-action-button"
-                              onClick={openReservationModal}
-                              type="button"
-                            >
-                              Create Reservation
-                            </button>
-                          </div>
-                        </section>
-                      )
-                    ) : (
+                      </form>
+                    ) : selectedOpportunity.opportunityStage.name === "Proposal" && !isSelectedOpportunityLost && hasActiveOpportunityReservation ? null : selectedOpportunity.opportunityStage.name === "Reservation Ready" && !isSelectedOpportunityLost ? null : (
                       <form className="crm-opportunity-action-card" onSubmit={onStageSubmit}>
                         <div className="crm-opportunity-action-card-header">
-                          <h4>{nextStageName ? `Move to ${nextStageName}` : "Stage Complete"}</h4>
+                          <h4>{nextStageName ? `1. Move to ${nextStageName}` : "Stage Complete"}</h4>
                           <p className="crm-muted-text">
                             Current: {selectedOpportunity.opportunityStage.name ?? "-"}
                             {nextStageName ? ` · Next: ${nextStageName}` : ""}
@@ -929,7 +1241,7 @@ export function OpportunitiesPage() {
                     <form className="crm-opportunity-action-card" onSubmit={onNoteSubmit}>
                       <div className="crm-opportunity-action-card-header">
                         <h4>Add Note</h4>
-                        <p className="crm-muted-text">Record sales notes for this opportunity.</p>
+                        <p className="crm-muted-text">Supporting activity — does not change the opportunity stage.</p>
                       </div>
                       <div className="crm-opportunity-action-card-fields">
                         <label className="crm-field">
@@ -944,72 +1256,94 @@ export function OpportunitiesPage() {
                       </div>
                     </form>
 
-                    <form className="crm-opportunity-action-card" onSubmit={onSiteVisitSubmit}>
-                      <div className="crm-opportunity-action-card-header">
-                        <h4>Schedule Visit</h4>
-                        <p className="crm-muted-text">Multiple visits are recorded in activity history.</p>
-                      </div>
-                      <div className="crm-opportunity-action-card-fields crm-opportunity-visit-fields">
-                        <label className="crm-field">
-                          <span className="crm-label">Visit Date</span>
-                          <Controller
-                            control={siteVisitForm.control}
-                            name="visitDate"
-                            render={({ field }) => (
-                              <DateTimeField
-                                className="crm-datetime-input"
-                                onBlur={field.onBlur}
-                                onChange={field.onChange}
-                                ref={field.ref}
-                                value={field.value}
-                              />
-                            )}
-                          />
-                        </label>
-                        <label className="crm-field">
-                          <span className="crm-label">Proposed Unit</span>
-                          <div className="crm-opportunity-unit-picker-row">
-                            <input type="hidden" {...siteVisitForm.register("proposedUnitCode")} />
-                            <input
-                              className="crm-input"
-                              placeholder="Choose from available units"
-                              readOnly
-                              value={siteVisitForm.watch("proposedUnitCode")}
+                    {!awaitsSiteVisitSchedule && !isSelectedOpportunityLost ? (
+                      <form className="crm-opportunity-action-card" onSubmit={onSiteVisitSubmit}>
+                        <div className="crm-opportunity-action-card-header">
+                          <h4>{editingVisitId ? "Update Site Visit" : "Schedule Another Visit"}</h4>
+                          <p className="crm-muted-text">
+                            Supporting activity — add or change in-person/virtual visits. Multiple visits are allowed.
+                          </p>
+                        </div>
+                        <div className="crm-opportunity-action-card-fields crm-opportunity-visit-fields">
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Type</span>
+                            <select className="crm-input" {...siteVisitForm.register("visitType")}>
+                              <option value="IN_PERSON">In-person</option>
+                              <option value="VIRTUAL">Virtual</option>
+                            </select>
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Date</span>
+                            <Controller
+                              control={siteVisitForm.control}
+                              name="visitDate"
+                              render={({ field }) => (
+                                <DateTimeField
+                                  className="crm-datetime-input"
+                                  onBlur={field.onBlur}
+                                  onChange={field.onChange}
+                                  ref={field.ref}
+                                  value={field.value}
+                                />
+                              )}
                             />
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Proposed Unit</span>
+                            <div className="crm-opportunity-unit-picker-row">
+                              <input type="hidden" {...siteVisitForm.register("proposedUnitCode")} />
+                              <input
+                                className="crm-input"
+                                placeholder="Optional — choose from available units"
+                                readOnly
+                                value={siteVisitForm.watch("proposedUnitCode")}
+                              />
+                              <button
+                                className="crm-secondary-button crm-opportunity-unit-picker-button"
+                                onClick={() => setUnitPickerOpen(true)}
+                                type="button"
+                              >
+                                Choose Unit
+                              </button>
+                            </div>
+                            {siteVisitForm.watch("proposedUnitCode") ? (
+                              <button
+                                className="crm-inline-clear-button"
+                                onClick={() => siteVisitForm.setValue("proposedUnitCode", "")}
+                                type="button"
+                              >
+                                Clear selection
+                              </button>
+                            ) : null}
+                          </label>
+                          <label className="crm-field">
+                            <span className="crm-label">Visit Remarks</span>
+                            <textarea
+                              className="crm-input crm-textarea crm-opportunity-textarea"
+                              placeholder="Visit remarks"
+                              {...siteVisitForm.register("remarks")}
+                            />
+                          </label>
+                        </div>
+                        <div className="crm-opportunity-action-card-footer">
+                          {editingVisitId ? (
                             <button
-                              className="crm-secondary-button crm-opportunity-unit-picker-button"
-                              disabled={isSelectedOpportunityLost}
-                              onClick={() => setUnitPickerOpen(true)}
+                              className="crm-secondary-button crm-opportunity-action-button"
+                              onClick={() => {
+                                setEditingVisitId(null);
+                                siteVisitForm.reset({ visitDate: "", visitType: "IN_PERSON", proposedUnitCode: "", remarks: "" });
+                              }}
                               type="button"
                             >
-                              Choose Unit
-                            </button>
-                          </div>
-                          {siteVisitForm.watch("proposedUnitCode") ? (
-                            <button
-                              className="crm-inline-clear-button"
-                              onClick={() => siteVisitForm.setValue("proposedUnitCode", "")}
-                              type="button"
-                            >
-                              Clear selection
+                              Cancel Edit
                             </button>
                           ) : null}
-                        </label>
-                        <label className="crm-field">
-                          <span className="crm-label">Visit Remarks</span>
-                          <textarea
-                            className="crm-input crm-textarea crm-opportunity-textarea"
-                            placeholder="Visit remarks"
-                            {...siteVisitForm.register("remarks")}
-                          />
-                        </label>
-                      </div>
-                      <div className="crm-opportunity-action-card-footer">
-                        <button className="crm-secondary-button crm-opportunity-action-button" disabled={siteVisitMutation.isPending || isSelectedOpportunityLost} type="submit">
-                          {siteVisitMutation.isPending ? "Scheduling..." : "Schedule Visit"}
-                        </button>
-                      </div>
-                    </form>
+                          <button className="crm-secondary-button crm-opportunity-action-button" disabled={siteVisitMutation.isPending} type="submit">
+                            {siteVisitMutation.isPending ? "Saving..." : editingVisitId ? "Update Visit" : "Schedule Visit"}
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
                   </div>
 
                   <form className="crm-opportunity-action-card crm-opportunity-lost-card" onSubmit={onLostSubmit}>
@@ -1068,9 +1402,44 @@ export function OpportunitiesPage() {
                   <h4>Site Visits</h4>
                   {selectedOpportunity.siteVisits.map((visit) => (
                     <article key={visit.id}>
-                      <strong>{formatDate(visit.visitDate)}</strong>
+                      <strong>
+                        {formatDate(visit.visitDate)} · {visitTypeLabel(visit.visitType)} · {visitStatusLabel(visit.status)}
+                      </strong>
                       <span>{visit.proposedUnitCode ?? "No unit selected"}</span>
-                      <p>{visit.remarks ?? visit.status}</p>
+                      <p>{visit.remarks ?? "No outcome notes yet."}</p>
+                      {!isSelectedOpportunityLost ? (
+                        <div className="crm-opportunity-action-card-footer" style={{ marginTop: 8, paddingTop: 0 }}>
+                          {visit.status === "SCHEDULED" ? (
+                            <button
+                              className="crm-primary-button crm-fit-button"
+                              onClick={() => {
+                                completeVisitForm.reset({
+                                  visitId: visit.id,
+                                  outcomeNotes: visit.remarks ?? ""
+                                });
+                              }}
+                              type="button"
+                            >
+                              Complete This Visit
+                            </button>
+                          ) : null}
+                          <button
+                            className="crm-secondary-button crm-fit-button"
+                            onClick={() => {
+                              setEditingVisitId(visit.id);
+                              siteVisitForm.reset({
+                                visitDate: toFormDateTime(visit.visitDate),
+                                visitType: visit.visitType === "VIRTUAL" ? "VIRTUAL" : "IN_PERSON",
+                                proposedUnitCode: visit.proposedUnitCode ?? "",
+                                remarks: visit.remarks ?? ""
+                              });
+                            }}
+                            type="button"
+                          >
+                            Edit Visit
+                          </button>
+                        </div>
+                      ) : null}
                     </article>
                   ))}
                   {selectedOpportunity.siteVisits.length === 0 ? <p className="crm-muted-text">No visits scheduled.</p> : null}

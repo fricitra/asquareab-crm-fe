@@ -26,6 +26,7 @@ import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { ListPagination } from "../shared/ListPagination";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
+import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
 
 type ProposalFormValues = {
   opportunityId: string;
@@ -272,9 +273,9 @@ function proposalNextAction(proposal: Proposal) {
   }
   if (status === "ACCEPTED") {
     return {
-      title: "Complete",
-      summary: "Proposal has been accepted. Continue toward contract and KYC when ready.",
-      dataNeeded: "No further proposal action required."
+      title: MOVE_TO_CTA.contract,
+      summary: "Proposal chapter is complete. Move to contract with the accepted commercial terms.",
+      dataNeeded: "Approved reservation and accepted proposal value."
     };
   }
   return {
@@ -678,20 +679,31 @@ export function ProposalsPage() {
     }
 
     processedHandoffRef.current = createFor;
+
+    const navState = location.state as {
+      fromReservation?: string;
+      fromOpportunity?: string;
+      handoffNotes?: string;
+    } | null;
+    const handoffNotes = navState?.handoffNotes?.trim();
+    if (handoffNotes) {
+      handoffNoteRef.current = handoffNotes;
+    } else if (navState?.fromReservation) {
+      handoffNoteRef.current = `Opened from approved reservation ${navState.fromReservation}.`;
+    } else if (navState?.fromOpportunity) {
+      handoffNoteRef.current = `Opened from opportunity ${navState.fromOpportunity} after moving to Proposal.`;
+    }
+
     openCreateModal(createFor);
 
-    const fromReservation = (location.state as { fromReservation?: string } | null)?.fromReservation;
-    const fromOpportunity = (location.state as { fromOpportunity?: string } | null)?.fromOpportunity;
-    if (fromReservation) {
-      handoffNoteRef.current = `Opened from approved reservation ${fromReservation}.`;
-    } else if (fromOpportunity) {
-      handoffNoteRef.current = `Opened from opportunity ${fromOpportunity} after moving to Proposal.`;
+    if (handoffNotes) {
+      proposalForm.setValue("remarks", handoffNotes);
     }
 
     const nextParams = new URLSearchParams(searchParams);
     nextParams.delete("createFor");
     setSearchParams(nextParams, { replace: true });
-  }, [location.state, searchParams, setSearchParams]);
+  }, [location.state, proposalForm, searchParams, setSearchParams]);
 
   const applyPricingFromUnit = (
     unit: Unit,
@@ -1097,6 +1109,7 @@ export function ProposalsPage() {
                   </div>
                   <span className="crm-status-pill">{selectedProposal.proposalStatus.name}</span>
                 </div>
+                <SalesPipelineStrip current="proposal" />
                 <WorkflowTracker steps={proposalWorkflowSteps(selectedProposal, formatInBase)} />
                 <dl className="crm-detail-list">
                   <div>
@@ -1267,7 +1280,7 @@ export function ProposalsPage() {
                       <div>
                         <span className="crm-label">Close-Off Stage</span>
                         <strong>Accepted</strong>
-                        <p>Proposal workflow is complete. Continue to contract creation when ready.</p>
+                        <p>Proposal chapter is complete. {MOVE_TO_CTA.contract} when ready.</p>
                       </div>
                       <div>
                         <span className="crm-label">Accepted By</span>
@@ -1279,7 +1292,7 @@ export function ProposalsPage() {
                       <section className="crm-opportunity-actions">
                         <div className="crm-opportunity-action-card crm-opportunity-action-card-wide">
                           <div className="crm-opportunity-action-card-header">
-                            <h4>Create Contract</h4>
+                            <h4>{MOVE_TO_CTA.contract}</h4>
                             <p className="crm-muted-text">
                               Proposal accepted at {formatInBase(selectedProposal.proposedPrice, selectedProposal.currencyCode)}.
                               Open contract form with reservation {activeProposalReservation.reservationNo} and value pre-filled.
@@ -1298,13 +1311,13 @@ export function ProposalsPage() {
                               onClick={() => openContractHandoff(selectedProposal)}
                               type="button"
                             >
-                              Create Contract
+                              {MOVE_TO_CTA.contract}
                             </button>
                           </div>
                         </div>
                       </section>
                     ) : (
-                      <p className="crm-muted-text">No approved reservation is available to create a contract.</p>
+                      <p className="crm-muted-text">No approved reservation is available to move to contract.</p>
                     )}
                   </>
                 )}

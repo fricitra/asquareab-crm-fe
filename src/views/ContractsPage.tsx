@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useFieldArray, useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { getApiErrorMessage } from "../api/auth";
 import { listCurrencies } from "../api/currencies";
@@ -18,32 +18,21 @@ import {
   type Contract
 } from "../api/contracts";
 import { listReservations } from "../api/reservations";
-import { getReferenceFamily } from "../api/reference-data";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
 import { useModalEscape } from "../hooks/useModalEscape";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
-import { DateField } from "../shared/DateField";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
+import { PaymentPlanDialog, type PaymentPlanFormValues } from "../shared/PaymentPlanDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
+import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
 
 type ContractFormValues = {
   reservationId: string;
   contractValue: string;
   currencyCode: string;
   remarks: string;
-};
-
-type PaymentPlanFormValues = {
-  planName: string;
-  remarks: string;
-  stages: Array<{
-    milestoneRefId: string;
-    milestoneLabel: string;
-    dueDate: string;
-    percentage: string;
-  }>;
 };
 
 type ErpFormValues = {
@@ -98,8 +87,8 @@ function contractNextAction(contract: Contract) {
     if (!contract.commercialSummary?.hasCompletePaymentPlan) {
       return {
         title: "Complete payment plan",
-        summary: "Save the reservation stage, tax snapshot, and remaining installment stages before signing.",
-        dataNeeded: "Configured stages must total 100% of the balance after reservation."
+        summary: "Open Save Payment Plan to configure SPA installment stages, then save before signing.",
+        dataNeeded: "Configured stages must total 100% of the SPA contract value."
       };
     }
     return {
@@ -117,21 +106,21 @@ function contractNextAction(contract: Contract) {
   }
   if (contract.erpHandoffStatus === "READY") {
     return {
-      title: "Mark handed off",
-      summary: "The CRM payload is ready. Mark handed off once ERP accepts the contract payload. This moves the workflow to the close-off stage.",
+      title: MOVE_TO_CTA.erp,
+      summary: "Handoff payload is ready. Move to ERP once the external system accepts the contract.",
       dataNeeded: "ERP Contract ID is optional in this baseline."
     };
   }
   if (contract.erpHandoffStatus === "FAILED") {
     return {
       title: "Resolve ERP handoff",
-      summary: "Review the ERP error, correct the payload or external issue, then mark ready again or hand off after ERP accepts it.",
+      summary: "Review the ERP error, correct the payload or external issue, then move to handoff again.",
       dataNeeded: contract.erpHandoff?.errorMessage ?? "ERP failure reason."
     };
   }
   return {
-    title: "Mark ERP ready",
-    summary: "Prepare the signed contract and payment-plan payload for ERP handoff.",
+    title: MOVE_TO_CTA.handoff,
+    summary: "Prepare the signed contract and payment-plan payload for ERP.",
     dataNeeded: "No additional data required."
   };
 }
@@ -191,7 +180,7 @@ function contractWorkflowSteps(
         : "Complete the payment plan before signing.",
       details: [
         { label: "Reservation Stage", value: formatValue(contract.commercialSummary?.reservationAmount ?? 0, contract.currencyCode) },
-        { label: "Balance", value: formatValue(contract.commercialSummary?.balanceAmount ?? 0, contract.currencyCode) }
+        { label: "SPA Schedule Base", value: formatValue(contract.commercialSummary?.contractValue ?? 0, contract.currencyCode) }
       ]
     },
     {
@@ -246,12 +235,13 @@ export function ContractsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const processedHandoffRef = useRef<string | null>(null);
   const handoffNoteRef = useRef<string | null>(null);
-  const { formatInBase, defaultContractCurrency } = useMoneyFormatter();
+  const { formatInBase, formatMoney, defaultContractCurrency } = useMoneyFormatter();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
   const [selectedContractId, setSelectedContractId] = useState<string | null>(null);
   const [contractDetailModalOpen, setContractDetailModalOpen] = useState(false);
+  const [paymentPlanModalOpen, setPaymentPlanModalOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
@@ -268,21 +258,6 @@ export function ContractsPage() {
   const contractForm = useForm<ContractFormValues>({
     defaultValues: { reservationId: "", contractValue: "", currencyCode: defaultContractCurrency, remarks: "" }
   });
-  const paymentPlanForm = useForm<PaymentPlanFormValues>({
-    defaultValues: {
-      planName: "Standard Payment Plan",
-      remarks: "",
-      stages: [
-        { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "20" },
-        { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "80" }
-      ]
-    }
-  });
-  const paymentStageFields = useFieldArray({
-    control: paymentPlanForm.control,
-    name: "stages"
-  });
-  const watchedPaymentStages = paymentPlanForm.watch("stages");
   const erpForm = useForm<ErpFormValues>({
     defaultValues: { erpContractId: "", errorMessage: "", remarks: "" }
   });
@@ -319,12 +294,6 @@ export function ContractsPage() {
     queryFn: () => listCurrencies({ contractAllowed: true, activeOnly: true }),
     staleTime: 60_000
   });
-  const paymentStagesQuery = useQuery({
-    queryKey: ["reference-family", "CONTRACT", "PAYMENT_STAGE"],
-    queryFn: () => getReferenceFamily("CONTRACT", "PAYMENT_STAGE"),
-    staleTime: 60_000
-  });
-
   const refreshContract = (contract: Contract, successTitle: string, successMessage: string) => {
     showNotice(successTitle, successMessage, "success");
     setSelectedContractId(contract.id);
@@ -341,6 +310,7 @@ export function ContractsPage() {
   };
 
   const closeContractDetailModal = () => {
+    setPaymentPlanModalOpen(false);
     setContractDetailModalOpen(false);
     setSelectedContractId(null);
   };
@@ -411,8 +381,10 @@ export function ContractsPage() {
         }))
       });
     },
-    onSuccess: (contract) =>
-      refreshContract(contract, "Payment Plan Saved", "Payment plan saved. Next: sign the contract (Step 3)."),
+    onSuccess: (contract) => {
+      setPaymentPlanModalOpen(false);
+      refreshContract(contract, "Payment Plan Saved", "Payment plan saved. Next: sign the contract (Step 3).");
+    },
     onError: (error) => showNotice("Payment Plan Not Saved", getApiErrorMessage(error, "Payment plan could not be saved."), "error")
   });
   const readyMutation = useMutation({
@@ -440,10 +412,21 @@ export function ContractsPage() {
   const activePaymentPlan = selectedContract?.paymentPlans?.find((plan) => plan.isActive) ?? null;
   const selectedContractNextAction = selectedContract ? contractNextAction(selectedContract) : null;
   const selectedContractIsClosed = selectedContract?.erpHandoffStatus === "HANDED_OFF";
-  const paymentPercentageTotal = (watchedPaymentStages ?? []).reduce(
-    (sum, stage) => sum + (pickNumber(stage.percentage) ?? 0),
-    0
-  );
+  const hasCompletePaymentPlan = selectedContract?.commercialSummary?.hasCompletePaymentPlan ?? false;
+
+  const openPaymentPlanModal = () => {
+    if (!selectedContract) return;
+    if (selectedContract.contractStatus.code === "DRAFT") {
+      showNotice("Issue Contract First", "Step 1 is issuing the contract. Save the payment plan after it is issued.", "error");
+      return;
+    }
+    if (selectedContract.contractStatus.code === "CANCELLED") {
+      showNotice("Contract Cancelled", "Payment plan cannot be edited on a cancelled contract.", "error");
+      return;
+    }
+    setPaymentPlanModalOpen(true);
+  };
+
   const availableReservations =
     reservationsQuery.data?.items.filter((reservation) =>
       ["APPROVED", "CONVERTED_TO_CONTRACT"].includes(reservation.reservationStatus.code ?? "")
@@ -459,27 +442,6 @@ export function ContractsPage() {
     };
   }, [contractsQuery.data]);
 
-  useEffect(() => {
-    if (!selectedContract || !contractDetailModalOpen) return;
-    const installmentLines = activePaymentPlan?.lines.filter((line) => line.lineType === "INSTALLMENT") ?? [];
-    paymentPlanForm.reset({
-      planName: activePaymentPlan?.planName ?? "Standard Payment Plan",
-      remarks: "",
-      stages:
-        installmentLines.length > 0
-          ? installmentLines.map((line) => ({
-              milestoneRefId: line.milestoneRefId ?? "",
-              milestoneLabel: line.milestoneLabel ?? "",
-              dueDate: line.dueDate ?? "",
-              percentage: line.percentageOfContract == null ? "" : String(line.percentageOfContract)
-            }))
-          : [
-              { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "20" },
-              { milestoneRefId: "", milestoneLabel: "", dueDate: "", percentage: "80" }
-            ]
-    });
-  }, [activePaymentPlan?.id, contractDetailModalOpen, selectedContract?.id]);
-
   const onContractSubmit = contractForm.handleSubmit((values) => {
     if (!values.reservationId) {
       showNotice("Reservation Required", "Select an approved reservation before creating the contract.", "error");
@@ -487,31 +449,10 @@ export function ContractsPage() {
     }
     createMutation.mutate(values);
   });
-  const onPaymentPlanSubmit = paymentPlanForm.handleSubmit((values) => {
+  const onPaymentPlanSave = (values: PaymentPlanFormValues) => {
     if (!selectedContract) return;
-    if (selectedContract.contractStatus.code === "DRAFT") {
-      showNotice("Issue Contract First", "Step 1 is issuing the contract. Save the payment plan after it is issued.", "error");
-      return;
-    }
-    if (values.stages.some((stage) => !stage.milestoneRefId)) {
-      showNotice("Payment Stage Missing", "Select a configured payment stage for every installment.", "error");
-      return;
-    }
-    const total = values.stages.reduce((sum, stage) => sum + (pickNumber(stage.percentage) ?? 0), 0);
-    if (Math.abs(total - 100) > 0.0001) {
-      showNotice(
-        "Percentages Incomplete",
-        `Remaining payment-stage percentages must total exactly 100%. Current total: ${total.toFixed(2)}%.`,
-        "error"
-      );
-      return;
-    }
-    if (selectedContract.contractStatus.code === "SIGNED" && !pickString(values.remarks)) {
-      showNotice("Change Notes Required", "Enter change notes before updating a signed payment plan.", "error");
-      return;
-    }
     paymentPlanMutation.mutate({ contractId: selectedContract.id, currencyCode: selectedContract.currencyCode, values });
-  });
+  };
   const onErpComplete = erpForm.handleSubmit((values) => {
     if (!selectedContract) return;
     completeMutation.mutate({ contractId: selectedContract.id, values });
@@ -539,7 +480,9 @@ export function ContractsPage() {
     setSearchParams(nextParams, { replace: true });
   }, [location.state, searchParams, setSearchParams]);
 
-  useModalEscape(contractDetailModalOpen, closeContractDetailModal, { disabled: createOpen || noticeDialog.open });
+  useModalEscape(contractDetailModalOpen, closeContractDetailModal, {
+    disabled: createOpen || paymentPlanModalOpen || noticeDialog.open
+  });
   useModalEscape(createOpen, () => setCreateOpen(false), { disabled: noticeDialog.open });
 
   const selectedReservation = availableReservations.find(
@@ -756,6 +699,7 @@ export function ContractsPage() {
                   </div>
                   <span className="crm-status-pill">{selectedContract.contractStatus.name}</span>
                 </div>
+                <SalesPipelineStrip current={selectedContract.erpHandoffStatus === "HANDED_OFF" ? "erp" : "contract"} />
                 <WorkflowTracker steps={contractWorkflowSteps(selectedContract, formatInBase)} />
                 <dl className="crm-detail-list">
                   <div>
@@ -808,7 +752,7 @@ export function ContractsPage() {
                             Current status: {selectedContract.contractStatus.name ?? "-"} · ERP: {selectedContract.erpHandoffStatus}
                           </p>
                           <p className="crm-muted-text">
-                            Order: 1. Issue Contract → 2. Save Payment Plan (below) → 3. Sign Contract → 4. ERP Handoff.
+                            Order: 1. Issue Contract → 2. Save Payment Plan → 3. Sign Contract → 4. ERP Handoff.
                           </p>
                         </div>
                         <div className="crm-opportunity-action-card-footer">
@@ -832,8 +776,18 @@ export function ContractsPage() {
                           </button>
                           <button
                             className={`crm-opportunity-action-button ${
-                              selectedContract.contractStatus.code === "ISSUED" &&
-                              selectedContract.commercialSummary?.hasCompletePaymentPlan
+                              selectedContract.contractStatus.code === "ISSUED" && !hasCompletePaymentPlan
+                                ? "crm-primary-button"
+                                : "crm-secondary-button"
+                            }`}
+                            onClick={openPaymentPlanModal}
+                            type="button"
+                          >
+                            {hasCompletePaymentPlan ? "2. Edit Payment Plan" : "2. Save Payment Plan"}
+                          </button>
+                          <button
+                            className={`crm-opportunity-action-button ${
+                              selectedContract.contractStatus.code === "ISSUED" && hasCompletePaymentPlan
                                 ? "crm-primary-button"
                                 : "crm-secondary-button"
                             }`}
@@ -851,10 +805,10 @@ export function ContractsPage() {
                                 );
                                 return;
                               }
-                              if (!selectedContract.commercialSummary?.hasCompletePaymentPlan) {
+                              if (!hasCompletePaymentPlan) {
                                 showNotice(
                                   "Payment Plan Required",
-                                  "Step 2 is saving the payment plan. Complete the stages below (total 100%) and click Save Payment Plan, then sign.",
+                                  "Step 2 is saving the payment plan. Click Save Payment Plan, complete stages (total 100%), save, then sign.",
                                   "error"
                                 );
                                 return;
@@ -876,176 +830,57 @@ export function ContractsPage() {
                         </div>
                       </div>
 
-                      <form className="crm-opportunity-action-card crm-opportunity-action-card-wide" onSubmit={onPaymentPlanSubmit}>
+                      <section className="crm-opportunity-action-card crm-opportunity-action-card-wide">
                         <div className="crm-opportunity-action-card-header">
-                          <h4>Step 2 · Payment Plan {selectedContract.commercialSummary?.hasCompletePaymentPlan ? "(Saved)" : "(Pending)"}</h4>
+                          <h4>Payment Plan {hasCompletePaymentPlan ? "(Saved)" : "(Pending)"}</h4>
                           <p className="crm-muted-text">
-                            Reservation is Stage 1. Configure the remaining balance stages and save before signing (Step 3).
+                            {hasCompletePaymentPlan
+                              ? "Commercial schedule is saved. Edit anytime before ERP handoff if needed."
+                              : "Open Step 2 to configure remaining balance stages after reservation."}
                           </p>
                         </div>
-                        <div className="crm-opportunity-action-card-fields">
-                          <dl className="crm-detail-grid">
-                            <div>
-                              <dt>SPA / Unit Value</dt>
-                              <dd>{formatInBase(selectedContract.commercialSummary?.contractValue ?? 0, selectedContract.currencyCode)}</dd>
-                            </div>
-                            <div>
-                              <dt>Stage 1 · Reservation</dt>
-                              <dd>{formatInBase(selectedContract.commercialSummary?.reservationAmount ?? 0, selectedContract.currencyCode)}</dd>
-                            </div>
-                            <div>
-                              <dt>Balance to Schedule</dt>
-                              <dd>{formatInBase(selectedContract.commercialSummary?.balanceAmount ?? 0, selectedContract.currencyCode)}</dd>
-                            </div>
-                            <div>
-                              <dt>Taxes / Fees (outside CRM)</dt>
-                              <dd>
-                                {formatInBase(
-                                  selectedContract.commercialSummary?.totalTaxAmount ?? 0,
-                                  selectedContract.commercialSummary?.baseCurrencyCode ?? null
-                                )}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt>Total Payable incl. Taxes</dt>
-                              <dd>
-                                {formatInBase(
-                                  selectedContract.commercialSummary?.totalPayableBase ?? 0,
-                                  selectedContract.commercialSummary?.baseCurrencyCode ?? null
-                                )}
-                              </dd>
-                            </div>
-                          </dl>
-
-                          <section className="crm-activity-list">
-                            <h4>Configured Kenya Taxes and Fees</h4>
-                            {(selectedContract.commercialSummary?.taxLines ?? []).map((tax) => (
-                              <article key={tax.id}>
-                                <strong>{tax.taxName}</strong>
-                                <span>
-                                  {tax.calculationType === "PERCENT"
-                                    ? `${tax.ratePercent ?? 0}% of SPA`
-                                    : "Fixed fee"}{" "}
-                                  · {formatInBase(tax.taxAmount, tax.currencyCode)}
-                                </span>
-                                <p>Paid outside CRM; included in the payment-plan summary.</p>
-                              </article>
-                            ))}
-                          </section>
-
-                          <label className="crm-field">
-                            <span className="crm-label">Plan Name</span>
-                            <input className="crm-input" {...paymentPlanForm.register("planName")} />
-                          </label>
-
-                          {paymentStageFields.fields.map((field, index) => {
-                            const percentage = pickNumber(watchedPaymentStages?.[index]?.percentage ?? "") ?? 0;
-                            const calculatedAmount =
-                              ((selectedContract.commercialSummary?.balanceAmount ?? 0) * percentage) / 100;
-                            return (
-                              <section className="crm-opportunity-action-card-fields" key={field.id}>
-                                <div className="crm-two-col">
-                                  <label className="crm-field">
-                                    <span className="crm-label">Stage {index + 2}</span>
-                                    <select
-                                      className="crm-input"
-                                      {...paymentPlanForm.register(`stages.${index}.milestoneRefId`)}
-                                    >
-                                      <option value="">Select payment stage</option>
-                                      {(paymentStagesQuery.data ?? []).map((stage) => (
-                                        <option key={stage.id} value={stage.id}>
-                                          {stage.level2Name}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                  <label className="crm-field">
-                                    <span className="crm-label">Percentage of Balance</span>
-                                    <input
-                                      className="crm-input"
-                                      inputMode="decimal"
-                                      {...paymentPlanForm.register(`stages.${index}.percentage`)}
-                                    />
-                                  </label>
-                                </div>
-                                <div className="crm-two-col">
-                                  <label className="crm-field">
-                                    <span className="crm-label">Due Date</span>
-                                    <Controller
-                                      control={paymentPlanForm.control}
-                                      name={`stages.${index}.dueDate`}
-                                      render={({ field: dateField }) => (
-                                        <DateField
-                                          onBlur={dateField.onBlur}
-                                          onChange={dateField.onChange}
-                                          ref={dateField.ref}
-                                          value={dateField.value}
-                                        />
-                                      )}
-                                    />
-                                  </label>
-                                  <label className="crm-field">
-                                    <span className="crm-label">Calculated Amount</span>
-                                    <input className="crm-input" readOnly value={formatInBase(calculatedAmount, selectedContract.currencyCode)} />
-                                  </label>
-                                </div>
-                                <div className="crm-opportunity-action-card-footer">
-                                  <button
-                                    className="crm-secondary-button crm-opportunity-action-button"
-                                    disabled={paymentStageFields.fields.length === 1}
-                                    onClick={() => paymentStageFields.remove(index)}
-                                    type="button"
-                                  >
-                                    Remove Stage
-                                  </button>
-                                </div>
-                              </section>
-                            );
-                          })}
-
-                          <div className="crm-opportunity-action-card-footer">
-                            <button
-                              className="crm-secondary-button crm-opportunity-action-button"
-                              onClick={() =>
-                                paymentStageFields.append({
-                                  milestoneRefId: "",
-                                  milestoneLabel: "",
-                                  dueDate: "",
-                                  percentage: ""
-                                })
-                              }
-                              type="button"
-                            >
-                              Add Payment Stage
-                            </button>
-                            <strong>Total: {paymentPercentageTotal.toFixed(2)}%</strong>
+                        <dl className="crm-detail-grid">
+                          <div>
+                            <dt>SPA / Unit Value</dt>
+                            <dd>{formatInBase(selectedContract.commercialSummary?.contractValue ?? 0, selectedContract.currencyCode)}</dd>
                           </div>
-
-                          <label className="crm-field">
-                            <span className="crm-label">
-                              {selectedContract.contractStatus.code === "SIGNED" ? "Change Notes (required)" : "Plan Notes"}
-                            </span>
-                            <textarea
-                              className="crm-input crm-textarea"
-                              placeholder="Explain payment-plan changes, especially after signing"
-                              {...paymentPlanForm.register("remarks")}
-                            />
-                          </label>
-                        </div>
+                          <div>
+                            <dt>Stage 1 · Reservation</dt>
+                            <dd>{formatInBase(selectedContract.commercialSummary?.reservationAmount ?? 0, selectedContract.currencyCode)}</dd>
+                          </div>
+                          <div>
+                            <dt>Schedule Base (SPA)</dt>
+                            <dd>{formatInBase(selectedContract.commercialSummary?.contractValue ?? 0, selectedContract.currencyCode)}</dd>
+                          </div>
+                          <div>
+                            <dt>Taxes / Fees</dt>
+                            <dd>
+                              {formatInBase(
+                                selectedContract.commercialSummary?.totalTaxAmount ?? 0,
+                                selectedContract.commercialSummary?.baseCurrencyCode ?? null
+                              )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Total Payable</dt>
+                            <dd>
+                              {formatInBase(
+                                selectedContract.commercialSummary?.totalPayableBase ?? 0,
+                                selectedContract.commercialSummary?.baseCurrencyCode ?? null
+                              )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Active Plan</dt>
+                            <dd>{activePaymentPlan?.planName ?? "Not saved"}</dd>
+                          </div>
+                        </dl>
                         <div className="crm-opportunity-action-card-footer">
-                          <button
-                            className="crm-primary-button crm-opportunity-action-button"
-                            disabled={paymentPlanMutation.isPending}
-                            type="submit"
-                          >
-                            {paymentPlanMutation.isPending
-                              ? "Saving..."
-                              : activePaymentPlan
-                                ? "2. Update Payment Plan"
-                                : "2. Save Payment Plan"}
+                          <button className="crm-secondary-button crm-opportunity-action-button" onClick={openPaymentPlanModal} type="button">
+                            {hasCompletePaymentPlan ? "View / Edit Payment Plan" : "Open Payment Plan"}
                           </button>
                         </div>
-                      </form>
+                      </section>
 
                       {selectedContract.erpHandoffStatus === "HANDED_OFF" ? (
                         <section className="crm-next-action">
@@ -1086,7 +921,7 @@ export function ContractsPage() {
                                   onClick={() => readyMutation.mutate(selectedContract.id)}
                                   type="button"
                                 >
-                                  {readyMutation.isPending ? "Updating..." : "Mark ERP Ready"}
+                                  {readyMutation.isPending ? "Updating..." : MOVE_TO_CTA.handoff}
                                 </button>
                               ) : null}
                               {selectedContract.erpHandoffStatus === "READY" ? (
@@ -1096,7 +931,7 @@ export function ContractsPage() {
                                   onClick={onErpComplete}
                                   type="button"
                                 >
-                                  {completeMutation.isPending ? "Completing..." : "Mark Handed Off"}
+                                  {completeMutation.isPending ? "Moving..." : MOVE_TO_CTA.erp}
                                 </button>
                               ) : null}
                               {selectedContract.erpHandoffStatus === "READY" || selectedContract.erpHandoffStatus === "FAILED" ? (
@@ -1161,6 +996,18 @@ export function ContractsPage() {
           </section>
         </div>
       ) : null}
+
+      <PaymentPlanDialog
+        contract={selectedContract}
+        formatInBase={formatInBase}
+        formatMoney={formatMoney}
+        isSaving={paymentPlanMutation.isPending}
+        noticeOpen={noticeDialog.open}
+        onClose={() => setPaymentPlanModalOpen(false)}
+        onNotice={showNotice}
+        onSave={onPaymentPlanSave}
+        open={paymentPlanModalOpen}
+      />
 
       <FormNoticeDialog
         confirmLabel="OK"

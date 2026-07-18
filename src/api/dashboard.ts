@@ -101,6 +101,28 @@ export type DashboardSummary = {
     };
     targets: DashboardTargets;
   };
+  audience: {
+    period: DashboardPeriod;
+    periodLabel: string;
+    leadsCaptured: number;
+    leadsConverted: number;
+    conversionRate: number;
+    bySource: DashboardBreakdown[];
+    byCaptureChannel: DashboardBreakdown[];
+    byNationality: DashboardBreakdown[];
+    byInterestCountry: DashboardBreakdown[];
+    byResidenceCountry: DashboardBreakdown[];
+    byBuyerType: DashboardBreakdown[];
+    byFundingSource: DashboardBreakdown[];
+    byPurpose: DashboardBreakdown[];
+    conversionBySource: Array<{
+      code: string | null;
+      name: string | null;
+      count: number;
+      convertedCount: number;
+      conversionRate: number;
+    }>;
+  };
   breakdowns: {
     opportunityStages: DashboardBreakdown[];
     inventoryStatuses: DashboardBreakdown[];
@@ -117,8 +139,13 @@ export type UpdateDashboardTargetsPayload = {
   remarks?: string;
 };
 
-export async function getDashboardSummary(period: DashboardPeriod = "this_month") {
-  const response = await apiClient.get<DashboardSummary>("/dashboard/summary", { params: { period } });
+export type DashboardSummaryView = "operations" | "pipeline" | "audience" | "all";
+
+export async function getDashboardSummary(
+  period: DashboardPeriod = "this_month",
+  view: DashboardSummaryView = "all"
+) {
+  const response = await apiClient.get<DashboardSummary>("/dashboard/summary", { params: { period, view } });
   return response.data;
 }
 
@@ -139,7 +166,7 @@ export const DASHBOARD_PERIOD_OPTIONS: Array<{ value: DashboardPeriod; label: st
   { value: "ytd", label: "Year to date" }
 ];
 
-export type DashboardView = "operations" | "pipeline";
+export type DashboardView = "operations" | "audience";
 
 export type DashboardAiInsight = {
   category: "progress" | "improvement" | "buyer_profile" | "scenario";

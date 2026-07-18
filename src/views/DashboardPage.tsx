@@ -31,10 +31,10 @@ const DASHBOARD_VIEWS: Record<
     title: "Sales Operations Overview",
     subtitle: "Executive KPIs, velocity performance, and commercial health"
   },
-  pipeline: {
-    label: "Pipeline & Stages",
-    title: "Sales Stage Pipeline View",
-    subtitle: "Stage distribution, inventory position, velocity mix, and action queue"
+  audience: {
+    label: "Lead & Customer Insights",
+    title: "Lead & Customer Insights",
+    subtitle: "Source mix, geography, buyer profile, and conversion by channel"
   }
 };
 
@@ -109,21 +109,27 @@ function StatusBars({
   );
 }
 
-function VelocityBars({ items }: { items: Array<{ code: string; name: string; count: number }> }) {
+function ConversionBars({
+  items
+}: {
+  items: Array<{ code: string | null; name: string | null; count: number; convertedCount: number; conversionRate: number }>;
+}) {
   const visibleItems = items.filter((item) => item.count > 0);
   const max = Math.max(...visibleItems.map((item) => item.count), 1);
 
   if (!visibleItems.length) {
-    return <p className="crm-muted-text">No unit velocity data yet.</p>;
+    return <p className="crm-muted-text">No conversion-by-source data yet.</p>;
   }
 
   return (
     <div className="crm-dashboard-bars">
       {visibleItems.map((item) => (
-        <div className="crm-dashboard-bar" key={item.code}>
+        <div className="crm-dashboard-bar" key={`${item.code}-${item.name}`}>
           <div className="crm-dashboard-bar-label">
-            <strong>{item.name}</strong>
-            <span>{item.count.toLocaleString()}</span>
+            <strong>{item.name ?? item.code ?? "-"}</strong>
+            <span>
+              {item.convertedCount.toLocaleString()}/{item.count.toLocaleString()} · {percent(item.conversionRate)}
+            </span>
           </div>
           <div className="crm-dashboard-bar-track">
             <span style={{ width: `${Math.max((item.count / max) * 100, item.count > 0 ? 8 : 0)}%` }} />
@@ -138,25 +144,32 @@ export function DashboardPage() {
   const accessToken = useAuthStore((state) => state.accessToken);
   const user = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
-  const { formatInBase } = useMoneyFormatter();
+  const { formatInBase, baseCurrency, toBase, fromBase } = useMoneyFormatter();
   const [period, setPeriod] = useState<DashboardPeriod>("this_month");
   const [dashboardView, setDashboardView] = useState<DashboardView>("operations");
+  const [geographyMode, setGeographyMode] = useState<"interest" | "residence">("interest");
+  const [revenueCurrency, setRevenueCurrency] = useState<"base" | "usd">("base");
+  const [targetsRevenueCurrency, setTargetsRevenueCurrency] = useState<"base" | "usd">("base");
   const [aiOpen, setAiOpen] = useState(false);
   const [targetsModalOpen, setTargetsModalOpen] = useState(false);
   const [targetsForm, setTargetsForm] = useState({
     monthlyUnitsBudget: "8",
-    monthlyRevenueBudgetUsd: "7200000",
+    monthlyRevenueBudget: "7200000",
     monthlyUnitsForecast: "10",
-    monthlyRevenueForecastUsd: "9000000"
+    monthlyRevenueForecast: "9000000"
   });
+  const [targetsError, setTargetsError] = useState<string | null>(null);
 
   const canEditTargets = Boolean(user?.permissions?.some((permission) => permission.code === "DASHBOARD" && permission.canUpdate));
+  const showUsdToggle = baseCurrency.toUpperCase() !== "USD";
 
   const dashboardQuery = useQuery({
-    queryKey: ["dashboard", "summary", period],
-    queryFn: () => getDashboardSummary(period),
+    queryKey: ["dashboard", "summary", period, dashboardView],
+    queryFn: () => getDashboardSummary(period, dashboardView),
     enabled: Boolean(accessToken),
-    staleTime: 15_000,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1
   });
 
@@ -164,6 +177,7 @@ export function DashboardPage() {
     mutationFn: updateDashboardTargets,
     onSuccess: () => {
       setTargetsModalOpen(false);
+      setTargetsError(null);
       void queryClient.invalidateQueries({ queryKey: ["dashboard", "summary"] });
     }
   });
@@ -180,15 +194,98 @@ export function DashboardPage() {
     return (summary.metrics.reservedUnits / summary.metrics.totalUnits) * 100;
   }, [summary]);
 
+  const revenueComparison = useMemo(() => {
+    if (!summary) {
+      return { actual: 0, forecast: 0, budget: 0 };
+    }
+
+    const usd = summary.salesVelocity.comparison.revenueUsd;
+    if (!showUsdToggle || revenueCurrency === "usd") {
+      return usd;
+    }
+
+    return {
+      actual: summary.salesVelocity.revenueSoldThisMonth,
+      forecast: toBase(usd.forecast, "USD"),
+      budget: toBase(usd.budget, "USD")
+    };
+  }, [summary, revenueCurrency, showUsdToggle, toBase]);
+
+  const formatRevenueTargetAmount = (usdAmount: number, mode: "base" | "usd") => {
+    if (!showUsdToggle || mode === "usd") {
+      return String(usdAmount);
+    }
+    return String(toBase(usdAmount, "USD"));
+  };
+
   const openTargetsModal = () => {
     if (!summary) return;
+    const mode: "base" | "usd" = showUsdToggle ? "base" : "usd";
+    setTargetsRevenueCurrency(mode);
+    setTargetsError(null);
     setTargetsForm({
       monthlyUnitsBudget: String(summary.salesVelocity.targets.monthlyUnitsBudget),
-      monthlyRevenueBudgetUsd: String(summary.salesVelocity.targets.monthlyRevenueBudgetUsd),
       monthlyUnitsForecast: String(summary.salesVelocity.targets.monthlyUnitsForecast),
-      monthlyRevenueForecastUsd: String(summary.salesVelocity.targets.monthlyRevenueForecastUsd)
+      monthlyRevenueBudget: formatRevenueTargetAmount(summary.salesVelocity.targets.monthlyRevenueBudgetUsd, mode),
+      monthlyRevenueForecast: formatRevenueTargetAmount(summary.salesVelocity.targets.monthlyRevenueForecastUsd, mode)
     });
     setTargetsModalOpen(true);
+  };
+
+  const switchTargetsRevenueCurrency = (mode: "base" | "usd") => {
+    if (mode === targetsRevenueCurrency) return;
+
+    const budget = Number(targetsForm.monthlyRevenueBudget);
+    const forecast = Number(targetsForm.monthlyRevenueForecast);
+
+    if (mode === "usd") {
+      const budgetUsd = fromBase(budget, "USD");
+      const forecastUsd = fromBase(forecast, "USD");
+      if (budgetUsd == null || forecastUsd == null) {
+        setTargetsError("USD exchange rate is unavailable. Keep editing in base currency.");
+        return;
+      }
+      setTargetsForm((current) => ({
+        ...current,
+        monthlyRevenueBudget: String(budgetUsd),
+        monthlyRevenueForecast: String(forecastUsd)
+      }));
+    } else {
+      setTargetsForm((current) => ({
+        ...current,
+        monthlyRevenueBudget: String(toBase(budget, "USD")),
+        monthlyRevenueForecast: String(toBase(forecast, "USD"))
+      }));
+    }
+
+    setTargetsError(null);
+    setTargetsRevenueCurrency(mode);
+  };
+
+  const saveTargets = () => {
+    const budgetInput = Number(targetsForm.monthlyRevenueBudget);
+    const forecastInput = Number(targetsForm.monthlyRevenueForecast);
+    let monthlyRevenueBudgetUsd = budgetInput;
+    let monthlyRevenueForecastUsd = forecastInput;
+
+    if (showUsdToggle && targetsRevenueCurrency === "base") {
+      const budgetUsd = fromBase(budgetInput, "USD");
+      const forecastUsd = fromBase(forecastInput, "USD");
+      if (budgetUsd == null || forecastUsd == null) {
+        setTargetsError("USD exchange rate is unavailable. Switch to USD or check currency rates.");
+        return;
+      }
+      monthlyRevenueBudgetUsd = budgetUsd;
+      monthlyRevenueForecastUsd = forecastUsd;
+    }
+
+    setTargetsError(null);
+    targetsMutation.mutate({
+      monthlyUnitsBudget: Number(targetsForm.monthlyUnitsBudget),
+      monthlyUnitsForecast: Number(targetsForm.monthlyUnitsForecast),
+      monthlyRevenueBudgetUsd,
+      monthlyRevenueForecastUsd
+    });
   };
 
   if (dashboardQuery.isLoading) {
@@ -217,6 +314,13 @@ export function DashboardPage() {
   const velocity = summary.salesVelocity;
   const formatMetric = (value: number) => formatInBase(value);
   const formatUsd = (value: number) => `USD ${formatAmount(value)}`;
+  const formatRevenueComparison = (value: number) =>
+    !showUsdToggle || revenueCurrency === "base" ? formatMetric(value) : formatUsd(value);
+  const revenueUnitLabel =
+    !showUsdToggle || revenueCurrency === "base"
+      ? `${baseCurrency} revenue in selected period`
+      : "USD revenue in selected period";
+  const targetsRevenueCode = !showUsdToggle || targetsRevenueCurrency === "base" ? baseCurrency : "USD";
   const activeView = DASHBOARD_VIEWS[dashboardView];
 
   return (
@@ -280,12 +384,36 @@ export function DashboardPage() {
           <VelocityBadge category={velocity.unitsSoldCategory} />
         </article>
         <article className="crm-card crm-dashboard-kpi crm-dashboard-kpi-velocity">
-          <h3>Revenue Sales Velocity</h3>
-          <div className="crm-kpi">{formatMetric(velocity.revenueSoldThisMonth)}</div>
+          <div className="crm-dashboard-kpi-heading">
+            <h3>Revenue Sales Velocity</h3>
+            {showUsdToggle ? (
+              <div aria-label="Revenue currency" className="crm-dashboard-view-segment crm-dashboard-currency-toggle" role="group">
+                <button
+                  className={`crm-dashboard-view-segment-button${revenueCurrency === "base" ? " is-active" : ""}`}
+                  onClick={() => setRevenueCurrency("base")}
+                  type="button"
+                >
+                  {baseCurrency}
+                </button>
+                <button
+                  className={`crm-dashboard-view-segment-button${revenueCurrency === "usd" ? " is-active" : ""}`}
+                  onClick={() => setRevenueCurrency("usd")}
+                  type="button"
+                >
+                  USD
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className="crm-kpi">
+            {!showUsdToggle || revenueCurrency === "base"
+              ? formatMetric(velocity.revenueSoldThisMonth)
+              : formatUsd(velocity.revenueSoldUsd ?? 0)}
+          </div>
           <ComparisonTable
-            formatValue={formatUsd}
-            unitLabel="USD revenue in selected period"
-            {...velocity.comparison.revenueUsd}
+            formatValue={formatRevenueComparison}
+            unitLabel={revenueUnitLabel}
+            {...revenueComparison}
           />
           <VelocityBadge category={velocity.revenueSoldCategory} />
         </article>
@@ -340,71 +468,138 @@ export function DashboardPage() {
       </section>
         </>
       ) : (
-        <section className="crm-dashboard-grid crm-dashboard-grid-focused">
-          <section className="crm-panel">
-            <div className="crm-panel-header">
-              <div>
-                <h3>Open Pipeline by Stage</h3>
-                <p className="crm-muted-text">Number of open opportunities in each stage</p>
+        <>
+          <section className="crm-grid crm-metric-grid crm-metric-grid-audience">
+            <article className="crm-card crm-dashboard-kpi">
+              <h3>Leads Captured</h3>
+              <div className="crm-kpi">{summary.audience.leadsCaptured.toLocaleString()}</div>
+              <p>Active leads captured in {summary.audience.periodLabel.toLowerCase()}</p>
+            </article>
+            <article className="crm-card crm-dashboard-kpi">
+              <h3>Converted (Period)</h3>
+              <div className="crm-kpi">{summary.audience.leadsConverted.toLocaleString()}</div>
+              <p>Converted among leads captured in this period</p>
+            </article>
+            <article className="crm-card crm-dashboard-kpi">
+              <h3>Period Conversion</h3>
+              <div className="crm-kpi">{percent(summary.audience.conversionRate)}</div>
+              <p>Converted ÷ captured for the selected period</p>
+            </article>
+            <article className="crm-card crm-dashboard-kpi">
+              <h3>Top Source</h3>
+              <div className="crm-kpi crm-kpi-text">
+                {summary.audience.bySource[0]?.name ?? summary.audience.bySource[0]?.code ?? "—"}
               </div>
-              <Link to="/opportunities">Open</Link>
-            </div>
-            <StatusBars items={summary.breakdowns.opportunityStages} />
+              <p>
+                {summary.audience.bySource[0]
+                  ? `${summary.audience.bySource[0].count.toLocaleString()} leads`
+                  : "No source mix yet"}
+              </p>
+            </article>
           </section>
 
-          <section className="crm-panel">
-            <div className="crm-panel-header">
-              <div>
-                <h3>Inventory Position</h3>
-                <p className="crm-muted-text">Live unit counts by availability status</p>
+          <section className="crm-dashboard-grid crm-dashboard-grid-focused">
+            <section className="crm-panel">
+              <div className="crm-panel-header">
+                <div>
+                  <h3>Lead Source Mix</h3>
+                  <p className="crm-muted-text">Top sources for leads captured in {summary.audience.periodLabel.toLowerCase()}</p>
+                </div>
+                <Link to="/leads">Open</Link>
               </div>
-              <Link to="/inventory">Open</Link>
-            </div>
-            <StatusBars items={summary.breakdowns.inventoryStatuses} />
-          </section>
+              <StatusBars items={summary.audience.bySource} />
+            </section>
 
-          <section className="crm-panel">
-            <div className="crm-panel-header">
-              <div>
-                <h3>Unit Velocity Mix</h3>
-                <p className="crm-muted-text">How quickly units sell or age on market</p>
+            <section className="crm-panel">
+              <div className="crm-panel-header">
+                <div>
+                  <h3>Capture Channel</h3>
+                  <p className="crm-muted-text">How leads entered the CRM this period</p>
+                </div>
+                <Link to="/leads">Open</Link>
               </div>
-              <Link to="/inventory">Open</Link>
-            </div>
-            <VelocityBars items={velocity.unitVelocityBreakdown} />
-          </section>
+              <StatusBars items={summary.audience.byCaptureChannel} />
+            </section>
 
-          <section className="crm-panel">
-            <div className="crm-panel-header">
-              <div>
-                <h3>Action Queue</h3>
-                <p className="crm-muted-text">
-                  Reservations, proposals, and ERP handoffs needing action · ERP {metrics.erpReady} ready · {metrics.failedHandoffs} failed · {metrics.erpHandedOff} handed off
-                </p>
+            <section className="crm-panel">
+              <div className="crm-panel-header">
+                <div>
+                  <h3>Nationality</h3>
+                  <p className="crm-muted-text">Lead nationality mix for the period</p>
+                </div>
               </div>
-            </div>
-            <div className="crm-dashboard-queue">
-              {summary.attentionItems.length ? (
-                summary.attentionItems.map((item) => (
-                  <Link className="crm-dashboard-queue-item" key={`${item.itemType}-${item.id}`} to={item.route}>
-                    <div>
-                      <strong>{item.itemType}</strong>
-                      <span>
-                        {item.documentNo} · {item.title ?? "-"}
-                      </span>
-                    </div>
-                    <div className="crm-dashboard-queue-meta">
-                      <span className="crm-status-pill">{item.statusName ?? item.statusCode ?? "-"}</span>
-                      {item.amount > 0 ? <span className="crm-dashboard-queue-amount">{formatMetric(item.amount)}</span> : null}
-                    </div>
-                  </Link>
-                ))
-              ) : (
-                <p className="crm-muted-text">No urgent workflow items.</p>
-              )}
-            </div>
+              <StatusBars items={summary.audience.byNationality} />
+            </section>
+
+            <section className="crm-panel">
+              <div className="crm-panel-header">
+                <div>
+                  <h3>Geography</h3>
+                  <p className="crm-muted-text">
+                    {geographyMode === "interest" ? "Country of interest" : "Current residence"} for period leads
+                  </p>
+                </div>
+                <div className="crm-dashboard-view-segment" role="group" aria-label="Geography mode">
+                  <button
+                    className={`crm-dashboard-view-segment-button${geographyMode === "interest" ? " is-active" : ""}`}
+                    onClick={() => setGeographyMode("interest")}
+                    type="button"
+                  >
+                    Interest
+                  </button>
+                  <button
+                    className={`crm-dashboard-view-segment-button${geographyMode === "residence" ? " is-active" : ""}`}
+                    onClick={() => setGeographyMode("residence")}
+                    type="button"
+                  >
+                    Residence
+                  </button>
+                </div>
+              </div>
+              <StatusBars
+                items={
+                  geographyMode === "interest"
+                    ? summary.audience.byInterestCountry
+                    : summary.audience.byResidenceCountry
+                }
+              />
+            </section>
+
+            <section className="crm-panel">
+              <div className="crm-panel-header">
+                <div>
+                  <h3>Buyer Profile</h3>
+                  <p className="crm-muted-text">Buyer type, funding, and purchase purpose (top segments)</p>
+                </div>
+              </div>
+              <div className="crm-dashboard-audience-profile">
+                <div>
+                  <h4>Buyer type</h4>
+                  <StatusBars items={summary.audience.byBuyerType} />
+                </div>
+                <div>
+                  <h4>Funding</h4>
+                  <StatusBars items={summary.audience.byFundingSource} />
+                </div>
+                <div>
+                  <h4>Purpose</h4>
+                  <StatusBars items={summary.audience.byPurpose} />
+                </div>
+              </div>
+            </section>
+
+            <section className="crm-panel">
+              <div className="crm-panel-header">
+                <div>
+                  <h3>Conversion by Source</h3>
+                  <p className="crm-muted-text">Converted vs captured for each source this period</p>
+                </div>
+                <Link to="/leads">Open</Link>
+              </div>
+              <ConversionBars items={summary.audience.conversionBySource} />
+            </section>
           </section>
-        </section>
+        </>
       )}
 
       <DashboardAiAssistant onClose={() => setAiOpen(false)} open={aiOpen} period={period} view={dashboardView} />
@@ -415,22 +610,40 @@ export function DashboardPage() {
             <div className="crm-panel-header">
               <div>
                 <h3>Sales Velocity Targets</h3>
-                <p className="crm-muted-text">Monthly budget and forecast values used for Actual / Forecast / Budget comparisons.</p>
+                <p className="crm-muted-text">
+                  Monthly budget and forecast for Actual / Forecast / Budget comparisons
+                  {showUsdToggle ? ` · revenue shown in ${targetsRevenueCode}` : ""}.
+                </p>
               </div>
-              <button className="crm-secondary-button crm-fit-button" onClick={() => setTargetsModalOpen(false)} type="button">
-                Close
-              </button>
+              <div className="crm-dashboard-targets-header-actions">
+                {showUsdToggle ? (
+                  <div aria-label="Target revenue currency" className="crm-dashboard-view-segment crm-dashboard-currency-toggle" role="group">
+                    <button
+                      className={`crm-dashboard-view-segment-button${targetsRevenueCurrency === "base" ? " is-active" : ""}`}
+                      onClick={() => switchTargetsRevenueCurrency("base")}
+                      type="button"
+                    >
+                      {baseCurrency}
+                    </button>
+                    <button
+                      className={`crm-dashboard-view-segment-button${targetsRevenueCurrency === "usd" ? " is-active" : ""}`}
+                      onClick={() => switchTargetsRevenueCurrency("usd")}
+                      type="button"
+                    >
+                      USD
+                    </button>
+                  </div>
+                ) : null}
+                <button className="crm-secondary-button crm-fit-button" onClick={() => setTargetsModalOpen(false)} type="button">
+                  Close
+                </button>
+              </div>
             </div>
             <form
               className="crm-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                targetsMutation.mutate({
-                  monthlyUnitsBudget: Number(targetsForm.monthlyUnitsBudget),
-                  monthlyRevenueBudgetUsd: Number(targetsForm.monthlyRevenueBudgetUsd),
-                  monthlyUnitsForecast: Number(targetsForm.monthlyUnitsForecast),
-                  monthlyRevenueForecastUsd: Number(targetsForm.monthlyRevenueForecastUsd)
-                });
+                saveTargets();
               }}
             >
               <label className="crm-field">
@@ -454,27 +667,28 @@ export function DashboardPage() {
                 />
               </label>
               <label className="crm-field">
-                <span className="crm-label">Monthly Revenue Budget (USD)</span>
+                <span className="crm-label">Monthly Revenue Budget ({targetsRevenueCode})</span>
                 <input
                   className="crm-input"
-                  onChange={(event) => setTargetsForm((current) => ({ ...current, monthlyRevenueBudgetUsd: event.target.value }))}
+                  onChange={(event) => setTargetsForm((current) => ({ ...current, monthlyRevenueBudget: event.target.value }))}
                   required
                   step="0.01"
                   type="number"
-                  value={targetsForm.monthlyRevenueBudgetUsd}
+                  value={targetsForm.monthlyRevenueBudget}
                 />
               </label>
               <label className="crm-field">
-                <span className="crm-label">Monthly Revenue Forecast (USD)</span>
+                <span className="crm-label">Monthly Revenue Forecast ({targetsRevenueCode})</span>
                 <input
                   className="crm-input"
-                  onChange={(event) => setTargetsForm((current) => ({ ...current, monthlyRevenueForecastUsd: event.target.value }))}
+                  onChange={(event) => setTargetsForm((current) => ({ ...current, monthlyRevenueForecast: event.target.value }))}
                   required
                   step="0.01"
                   type="number"
-                  value={targetsForm.monthlyRevenueForecastUsd}
+                  value={targetsForm.monthlyRevenueForecast}
                 />
               </label>
+              {targetsError ? <div className="crm-error-banner">{targetsError}</div> : null}
               <div className="crm-modal-actions">
                 <button className="crm-secondary-button" onClick={() => setTargetsModalOpen(false)} type="button">
                   Cancel

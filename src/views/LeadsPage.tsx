@@ -44,6 +44,7 @@ import { DateField } from "../shared/DateField";
 import { DateTimeField } from "../shared/DateTimeField";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { WorkflowTracker, type WorkflowStep } from "../shared/WorkflowTracker";
+import { ContinuePanel, MOVE_TO_CTA, SalesPipelineStrip } from "../shared/SalesPipeline";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { useAuthStore } from "../store/auth-store";
 
@@ -281,93 +282,18 @@ function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, curren
     },
     {
       id: "converted",
-      title: "Converted",
+      title: "Moved to Opportunity",
       status: isConverted ? "completed" : "next",
       timestamp: lead.convertedAt,
       user: lead.convertedByUser.name,
       role: "CRM User",
-      summary: isConverted ? "Lead has been converted to an opportunity." : "Convert the qualified lead into an opportunity.",
+      summary: isConverted
+        ? "Lead chapter is complete. Continue in Opportunities."
+        : "When qualification is complete, move this lead to an opportunity.",
       details: [
         { label: "Customer", value: lead.customer.name },
-        { label: "Lead Status", value: lead.leadStatus.name }
-      ]
-    },
-    {
-      id: "opportunity",
-      title: "Opportunity",
-      status: isConverted ? "current" : "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: isConverted ? "Continue this customer journey in Opportunities." : "This becomes available after conversion.",
-      details: [
-        { label: "Next Screen", value: "/opportunities" },
-        { label: "Next Data", value: "Stage, probability, notes, and site visits" }
-      ]
-    },
-    {
-      id: "site-visit",
-      title: "Site Visit",
-      status: "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Schedule and complete the customer visit from Opportunity Detail.",
-      details: [
-        { label: "Required Before", value: "Opportunity" },
-        { label: "Next Data", value: "Visit date, proposed unit, remarks" }
-      ]
-    },
-    {
-      id: "negotiation",
-      title: "Negotiation",
-      status: "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Move the opportunity stage when commercial discussion starts.",
-      details: [
-        { label: "Required Before", value: "Site Visit" },
-        { label: "Next Data", value: "Probability and remarks" }
-      ]
-    },
-    {
-      id: "reservation-ready",
-      title: "Reservation Ready",
-      status: "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Move the opportunity to reservation-ready before selecting and blocking a unit.",
-      details: [
-        { label: "Required Before", value: "Negotiation" },
-        { label: "Next Action", value: "Create Reservation" }
-      ]
-    },
-    {
-      id: "reserved",
-      title: "Reserved",
-      status: "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Create the reservation from Opportunity Detail or the Reservations screen.",
-      details: [
-        { label: "Required Data", value: "Available unit, amount, expiry" },
-        { label: "Next Step", value: "Optional Proposal / Offer" }
-      ]
-    },
-    {
-      id: "proposal",
-      title: "Proposal",
-      status: "next",
-      timestamp: null,
-      user: null,
-      role: null,
-      summary: "Commercial offer after the unit is reserved.",
-      details: [
-        { label: "Required Before", value: "Active reservation" },
-        { label: "Next Screen", value: "/proposals" }
+        { label: "Lead Status", value: lead.leadStatus.name },
+        { label: "Next", value: "Move to Opportunity" }
       ]
     }
   ];
@@ -536,6 +462,7 @@ export function LeadsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = DEFAULT_LIST_PAGE_SIZE;
@@ -560,24 +487,42 @@ export function LeadsPage() {
 
   const isLeadEditorOpen = leadCreateModalOpen || leadDetailModalOpen;
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const nextSearch = searchInput.trim();
+      setSearch((current) => {
+        if (current === nextSearch) {
+          return current;
+        }
+        setPage(1);
+        return nextSearch;
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
   const leadSourcesQuery = useQuery({
     queryKey: ["reference", "LEAD", "CATEGORY"],
     queryFn: () => getReferenceFamily("LEAD", "CATEGORY"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const leadRatingsQuery = useQuery({
     queryKey: ["reference", "LEAD", "RATING"],
     queryFn: () => getReferenceFamily("LEAD", "RATING"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const gendersQuery = useQuery({
     queryKey: ["reference", "PERSON", "GENDER"],
     queryFn: () => getReferenceFamily("PERSON", "GENDER"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const countriesQuery = useQuery({
     queryKey: ["geography", "countries"],
     queryFn: getGeographyCountries,
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const countryOptions = useMemo<ReferenceDataItem[]>(
@@ -598,61 +543,73 @@ export function LeadsPage() {
   const buyerTypesQuery = useQuery({
     queryKey: ["reference", "CUSTOMER", "BUYER_TYPE"],
     queryFn: () => getReferenceFamily("CUSTOMER", "BUYER_TYPE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const fundingSourcesQuery = useQuery({
     queryKey: ["reference", "CUSTOMER", "FUNDING_SOURCE"],
     queryFn: () => getReferenceFamily("CUSTOMER", "FUNDING_SOURCE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const purposeOfPurchaseQuery = useQuery({
     queryKey: ["reference", "LEAD", "PURPOSE_OF_PURCHASE"],
     queryFn: () => getReferenceFamily("LEAD", "PURPOSE_OF_PURCHASE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const decisionMakerStatusQuery = useQuery({
     queryKey: ["reference", "LEAD", "DECISION_MAKER_STATUS"],
     queryFn: () => getReferenceFamily("LEAD", "DECISION_MAKER_STATUS"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const affordabilityStatusQuery = useQuery({
     queryKey: ["reference", "LEAD", "AFFORDABILITY_STATUS"],
     queryFn: () => getReferenceFamily("LEAD", "AFFORDABILITY_STATUS"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const interactionTypeQuery = useQuery({
     queryKey: ["reference", "LEAD", "INTERACTION_TYPE"],
     queryFn: () => getReferenceFamily("LEAD", "INTERACTION_TYPE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const interactionOutcomeQuery = useQuery({
     queryKey: ["reference", "LEAD", "INTERACTION_OUTCOME"],
     queryFn: () => getReferenceFamily("LEAD", "INTERACTION_OUTCOME"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const unitTypesQuery = useQuery({
     queryKey: ["reference", "INVENTORY", "UNIT_TYPE"],
     queryFn: () => getReferenceFamily("INVENTORY", "UNIT_TYPE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const bedroomQuery = useQuery({
     queryKey: ["reference", "INVENTORY", "BEDROOM_COUNT"],
     queryFn: () => getReferenceFamily("INVENTORY", "BEDROOM_COUNT"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const viewTypeQuery = useQuery({
     queryKey: ["reference", "INVENTORY", "VIEW_TYPE"],
     queryFn: () => getReferenceFamily("INVENTORY", "VIEW_TYPE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const incomeRangeQuery = useQuery({
     queryKey: ["reference", "PERSON", "INCOME RANGE"],
     queryFn: () => getReferenceFamily("PERSON", "INCOME RANGE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const timelinesQuery = useQuery({
     queryKey: ["reference", "LEAD", "PURCHASE_TIMELINE"],
     queryFn: () => getReferenceFamily("LEAD", "PURCHASE_TIMELINE"),
+    enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
   const campaignsQuery = useQuery({
@@ -685,14 +642,11 @@ export function LeadsPage() {
     refetchOnReconnect: false
   });
 
-  useEffect(() => {
-    setPage(1);
-  }, [search]);
-
   const leadDetailQuery = useQuery({
     queryKey: ["lead", selectedLeadId],
     queryFn: () => getLead(selectedLeadId ?? ""),
     enabled: Boolean(selectedLeadId && leadDetailModalOpen),
+    staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false
   });
@@ -774,8 +728,10 @@ export function LeadsPage() {
   const residenceCitiesQuery = useQuery({
     queryKey: ["geography", "cities", selectedResidenceCountryCode, deferredCitySearch],
     queryFn: () => getCitiesByCountry(selectedResidenceCountryCode, deferredCitySearch),
-    enabled: Boolean(selectedResidenceCountryCode),
-    staleTime: 30 * 60 * 1000
+    enabled: Boolean(selectedResidenceCountryCode && leadCreateModalOpen),
+    staleTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
   });
   const residenceCityOptions = residenceCitiesQuery.data?.items ?? [];
   const previousResidenceRef = useRef<string | null>(null);
@@ -792,8 +748,10 @@ export function LeadsPage() {
   const qualifyCitiesQuery = useQuery({
     queryKey: ["geography", "cities", selectedQualifyResidenceCountryCode, deferredQualifyCitySearch],
     queryFn: () => getCitiesByCountry(selectedQualifyResidenceCountryCode, deferredQualifyCitySearch),
-    enabled: Boolean(selectedQualifyResidenceCountryCode),
-    staleTime: 30 * 60 * 1000
+    enabled: Boolean(selectedQualifyResidenceCountryCode && leadDetailModalOpen),
+    staleTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
   });
   const qualifyCityOptions = qualifyCitiesQuery.data?.items ?? [];
   const previousQualifyResidenceRef = useRef<string | null>(null);
@@ -1008,54 +966,63 @@ export function LeadsPage() {
     previousLeadSourceRef.current = selectedLeadSourceRefId;
   }, [createForm, selectedLeadSourceRefId]);
 
-  const openLeadEditModal = (lead: Lead) => {
-    setEditingLeadId(lead.id);
-    setSelectedLeadId(lead.id);
-    previousLeadSourceRef.current = lead.leadSource.id ?? "";
-    previousResidenceRef.current = lead.currentResidenceCountry.code ?? "";
-    createForm.reset({
-      firstName: lead.firstName ?? lead.leadTitle ?? "",
-      lastName: lead.lastName ?? lead.contactName ?? "",
-      mobileNo: lead.mobileNo ?? "",
-      whatsappNo: lead.whatsappNo ?? "",
-      email: lead.email ?? "",
-      leadSourceRefId: lead.leadSource.id ?? "",
-      captureChannelRefId: lead.captureChannel.id ?? "",
-      campaignId: lead.campaign.id ?? "",
-      campaignNotes: lead.campaignNotes ?? "",
-      assignedToUserId: lead.assignedToUser.id ?? user?.id ?? "",
-      dateGenerated: lead.capturedAt?.slice(0, 10) ?? todayIsoDate(),
-      leadRatingRefId: lead.leadRating.id ?? "",
-      genderRefId: lead.gender.id ?? "",
-      dateOfBirth: lead.dateOfBirth?.slice(0, 10) ?? "",
-      nationalityCode: lead.nationality.code ?? "",
-      countryCode: lead.country.code ?? "",
-      city: lead.city ?? "",
-      currentResidenceCountryCode: lead.currentResidenceCountry.code ?? "",
-      buyerTypeRefId: lead.buyerType.id ?? "",
-      fundingSourceRefId: lead.fundingSource.id ?? "",
-      purposeOfPurchaseRefId: lead.purposeOfPurchase.id ?? "",
-      decisionMakerStatusRefId: lead.decisionMakerStatus.id ?? "",
-      affordabilityStatusRefId: lead.affordabilityStatus.id ?? "",
-      lastInteractionAt: lead.lastInteractionAt ? lead.lastInteractionAt.slice(0, 16) : "",
-      lastInteractionTypeRefId: lead.lastInteractionType.id ?? "",
-      interactionOutcomeRefId: lead.interactionOutcome.id ?? "",
-      interactionCount: lead.interactionCount == null ? "" : String(lead.interactionCount),
-      budgetMax: lead.budgetMax == null ? "" : String(lead.budgetMax),
-      preferredCurrencyCode: lead.preferredCurrencyCode ?? baseCurrency,
-      preferredProjectCode: lead.preferredProjectCode ?? "",
-      preferredLocationCode: lead.preferredLocationCode ?? "",
-      preferredUnitTypeRefId: lead.preferredUnitType.id ?? "",
-      preferredBedroomRefId: lead.preferredBedroom.id ?? "",
-      preferredViewRefId: lead.preferredView.id ?? "",
-      incomeRangeRefId: lead.incomeRange.id ?? "",
-      acquisitionCost: lead.acquisitionCost == null ? "" : String(lead.acquisitionCost),
-      purchaseTimelineRefId: lead.purchaseTimeline.id ?? "",
-      qualificationNotes: lead.qualificationNotes ?? "",
-      scoreTotal: lead.scoreTotal == null ? "" : String(lead.scoreTotal),
-      remarks: lead.remarks ?? ""
-    });
-    setLeadCreateModalOpen(true);
+  const openLeadEditModal = async (lead: Lead) => {
+    try {
+      const detail = await queryClient.fetchQuery({
+        queryKey: ["lead", lead.id],
+        queryFn: () => getLead(lead.id),
+        staleTime: 30_000
+      });
+      setEditingLeadId(detail.id);
+      setSelectedLeadId(detail.id);
+      previousLeadSourceRef.current = detail.leadSource.id ?? "";
+      previousResidenceRef.current = detail.currentResidenceCountry.code ?? "";
+      createForm.reset({
+        firstName: detail.firstName ?? detail.leadTitle ?? "",
+        lastName: detail.lastName ?? detail.contactName ?? "",
+        mobileNo: detail.mobileNo ?? "",
+        whatsappNo: detail.whatsappNo ?? "",
+        email: detail.email ?? "",
+        leadSourceRefId: detail.leadSource.id ?? "",
+        captureChannelRefId: detail.captureChannel.id ?? "",
+        campaignId: detail.campaign.id ?? "",
+        campaignNotes: detail.campaignNotes ?? "",
+        assignedToUserId: detail.assignedToUser.id ?? user?.id ?? "",
+        dateGenerated: detail.capturedAt?.slice(0, 10) ?? todayIsoDate(),
+        leadRatingRefId: detail.leadRating.id ?? "",
+        genderRefId: detail.gender.id ?? "",
+        dateOfBirth: detail.dateOfBirth?.slice(0, 10) ?? "",
+        nationalityCode: detail.nationality.code ?? "",
+        countryCode: detail.country.code ?? "",
+        city: detail.city ?? "",
+        currentResidenceCountryCode: detail.currentResidenceCountry.code ?? "",
+        buyerTypeRefId: detail.buyerType.id ?? "",
+        fundingSourceRefId: detail.fundingSource.id ?? "",
+        purposeOfPurchaseRefId: detail.purposeOfPurchase.id ?? "",
+        decisionMakerStatusRefId: detail.decisionMakerStatus.id ?? "",
+        affordabilityStatusRefId: detail.affordabilityStatus.id ?? "",
+        lastInteractionAt: detail.lastInteractionAt ? detail.lastInteractionAt.slice(0, 16) : "",
+        lastInteractionTypeRefId: detail.lastInteractionType.id ?? "",
+        interactionOutcomeRefId: detail.interactionOutcome.id ?? "",
+        interactionCount: detail.interactionCount == null ? "" : String(detail.interactionCount),
+        budgetMax: detail.budgetMax == null ? "" : String(detail.budgetMax),
+        preferredCurrencyCode: detail.preferredCurrencyCode ?? baseCurrency,
+        preferredProjectCode: detail.preferredProjectCode ?? "",
+        preferredLocationCode: detail.preferredLocationCode ?? "",
+        preferredUnitTypeRefId: detail.preferredUnitType.id ?? "",
+        preferredBedroomRefId: detail.preferredBedroom.id ?? "",
+        preferredViewRefId: detail.preferredView.id ?? "",
+        incomeRangeRefId: detail.incomeRange.id ?? "",
+        acquisitionCost: detail.acquisitionCost == null ? "" : String(detail.acquisitionCost),
+        purchaseTimelineRefId: detail.purchaseTimeline.id ?? "",
+        qualificationNotes: detail.qualificationNotes ?? "",
+        scoreTotal: detail.scoreTotal == null ? "" : String(detail.scoreTotal),
+        remarks: detail.remarks ?? ""
+      });
+      setLeadCreateModalOpen(true);
+    } catch (error) {
+      showNotice("Lead Not Loaded", getApiErrorMessage(error, "Lead details could not be loaded for editing."), "error");
+    }
   };
 
   useEffect(() => {
@@ -1211,9 +1178,9 @@ export function LeadsPage() {
           <h3>Inbox</h3>
           <input
             className="crm-input crm-search-input"
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => setSearchInput(event.target.value)}
             placeholder="Search lead, contact, phone, email"
-            value={search}
+            value={searchInput}
           />
         </div>
 
@@ -1560,7 +1527,53 @@ export function LeadsPage() {
                   </div>
                   <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
                 </div>
+                <SalesPipelineStrip current="lead" />
                 <WorkflowTracker steps={leadWorkflowSteps(selectedLead, formatLeadBudget)} />
+                {selectedLead.convertedAt ? (
+                  <ContinuePanel
+                    nowLabel="Lead complete"
+                    nowSummary="This lead has been moved to an opportunity."
+                    nextLabel={MOVE_TO_CTA.opportunity}
+                    nextSummary="Open Opportunities to continue site visit and negotiation."
+                  >
+                    <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
+                      Open Opportunities
+                    </button>
+                  </ContinuePanel>
+                ) : selectedLead.qualifiedAt ? (
+                  <ContinuePanel
+                    nowLabel="Qualified"
+                    nowSummary="Buyer details are qualified. Lead chapter can close."
+                    nextLabel={MOVE_TO_CTA.opportunity}
+                    nextSummary="Create the opportunity and continue the sales journey."
+                    dataNeeded="No further lead data required."
+                  >
+                    <button
+                      className="crm-primary-button crm-fit-button"
+                      disabled={convertMutation.isPending}
+                      onClick={() => convertMutation.mutate(selectedLead.id)}
+                      type="button"
+                    >
+                      {convertMutation.isPending ? "Moving..." : MOVE_TO_CTA.opportunity}
+                    </button>
+                  </ContinuePanel>
+                ) : !selectedLead.assignedToUser.id ? (
+                  <ContinuePanel
+                    nowLabel={selectedLead.leadStatus.name ?? "New"}
+                    nowSummary="Lead is captured and waiting for ownership."
+                    nextLabel="Assign Lead"
+                    nextSummary="Assign before score, rating, and qualification."
+                    dataNeeded="Assignee user."
+                  />
+                ) : (
+                  <ContinuePanel
+                    nowLabel="Assigned"
+                    nowSummary={`Assigned to ${selectedLead.assignedToUser.name ?? "CRM user"}.`}
+                    nextLabel="Qualify Lead"
+                    nextSummary="Complete score, rating, and qualification checklist."
+                    dataNeeded="Rating, buyer type, funding, timeline, and notes."
+                  />
+                )}
                 <dl className="crm-detail-list">
                   <div>
                     <dt>Phone</dt>
@@ -1790,37 +1803,6 @@ export function LeadsPage() {
                       </div>
                     </section>
                   )}
-
-                  {selectedLead.convertedAt ? (
-                    <section className="crm-opportunity-action-card">
-                      <div className="crm-opportunity-action-card-header">
-                        <h4>Continue in Opportunities</h4>
-                        <p className="crm-muted-text">Lead work is complete. Continue the customer journey in the Opportunity module.</p>
-                      </div>
-                      <div className="crm-opportunity-action-card-footer">
-                        <button className="crm-primary-button crm-opportunity-action-button" onClick={() => navigate("/opportunities")} type="button">
-                          Open Opportunities
-                        </button>
-                      </div>
-                    </section>
-                  ) : selectedLead.qualifiedAt ? (
-                    <section className="crm-opportunity-action-card">
-                      <div className="crm-opportunity-action-card-header">
-                        <h4>Convert to Opportunity</h4>
-                        <p className="crm-muted-text">Create the opportunity once the buyer details are qualified.</p>
-                      </div>
-                      <div className="crm-opportunity-action-card-footer">
-                        <button
-                          className="crm-primary-button crm-opportunity-action-button"
-                          disabled={convertMutation.isPending}
-                          onClick={() => convertMutation.mutate(selectedLead.id)}
-                          type="button"
-                        >
-                          {convertMutation.isPending ? "Converting..." : "Convert to Opportunity"}
-                        </button>
-                      </div>
-                    </section>
-                  ) : null}
                 </section>
               </div>
             ) : (

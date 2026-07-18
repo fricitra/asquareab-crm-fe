@@ -46,6 +46,7 @@ export type OpportunityDetail = Opportunity & {
   siteVisits: Array<{
     id: string;
     visitDate: string | null;
+    visitType: "IN_PERSON" | "VIRTUAL";
     projectCode: string | null;
     proposedUnitCode: string | null;
     assignedToUser: NamedLink;
@@ -113,11 +114,33 @@ export async function addOpportunityNote(id: string, noteText: string, noteType?
   return response.data;
 }
 
-export async function scheduleSiteVisit(id: string, visitDate: string, proposedUnitCode?: string, remarks?: string) {
-  const response = await apiClient.post<OpportunityDetail>(`/opportunities/${id}/site-visits`, {
-    visitDate,
-    proposedUnitCode,
-    remarks
-  });
+export async function scheduleSiteVisit(
+  id: string,
+  payload: {
+    visitDate: string;
+    visitType: "IN_PERSON" | "VIRTUAL";
+    proposedUnitCode?: string;
+    remarks?: string;
+  }
+) {
+  const response = await apiClient.post<OpportunityDetail>(`/opportunities/${id}/site-visits`, payload);
+  return response.data;
+}
+
+export async function updateSiteVisit(
+  opportunityId: string,
+  visitId: string,
+  payload: {
+    visitDate?: string;
+    visitType?: "IN_PERSON" | "VIRTUAL";
+    status?: "SCHEDULED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+    proposedUnitCode?: string;
+    remarks?: string;
+  }
+) {
+  const response = await apiClient.patch<OpportunityDetail>(
+    `/opportunities/${opportunityId}/site-visits/${visitId}`,
+    payload
+  );
   return response.data;
 }
