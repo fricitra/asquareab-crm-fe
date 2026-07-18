@@ -19,7 +19,10 @@ import { createReservation, listReservations, type Reservation } from "../api/re
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
 import { getApiErrorMessage } from "../lib/format-api-error";
+import { getContractAgreedPack } from "../api/agreed-pack";
+import { listContracts } from "../api/contracts";
 import { useModalEscape } from "../hooks/useModalEscape";
+import { AgreedPackView } from "../shared/AgreedPackView";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { DateField } from "../shared/DateField";
 import { DateTimeField } from "../shared/DateTimeField";
@@ -292,6 +295,7 @@ export function OpportunitiesPage() {
   const [reservationUnitPickerOpen, setReservationUnitPickerOpen] = useState(false);
   const [actionNotes, setActionNotes] = useState("");
   const [editingVisitId, setEditingVisitId] = useState<string | null>(null);
+  const [agreedPackContractId, setAgreedPackContractId] = useState<string | null>(null);
   const [noticeDialog, setNoticeDialog] = useState<NoticeState>({
     open: false,
     title: "",
@@ -375,6 +379,26 @@ export function OpportunitiesPage() {
     enabled: Boolean(selectedOpportunityId && opportunityDetailModalOpen),
     staleTime: 10_000,
     refetchOnWindowFocus: false
+  });
+
+  const opportunityContractsQuery = useQuery({
+    queryKey: ["contracts", "opportunity", selectedOpportunityId],
+    queryFn: () =>
+      listContracts({
+        opportunityId: selectedOpportunityId ?? "",
+        limit: 5,
+        offset: 0
+      }),
+    enabled: Boolean(selectedOpportunityId && opportunityDetailModalOpen),
+    staleTime: 10_000,
+    refetchOnWindowFocus: false
+  });
+
+  const opportunityAgreedPackQuery = useQuery({
+    queryKey: ["contract", agreedPackContractId, "agreed-pack"],
+    queryFn: () => getContractAgreedPack(agreedPackContractId ?? ""),
+    enabled: Boolean(agreedPackContractId),
+    staleTime: 15_000
   });
 
   const stageForm = useForm<StageFormValues>({
@@ -678,7 +702,11 @@ export function OpportunitiesPage() {
   };
 
   useModalEscape(opportunityDetailModalOpen, closeOpportunityDetailModal, {
-    disabled: noticeDialog.open || reservationModalOpen || unitPickerOpen || reservationUnitPickerOpen
+    disabled: noticeDialog.open || reservationModalOpen || unitPickerOpen || reservationUnitPickerOpen || Boolean(agreedPackContractId)
+  });
+
+  useModalEscape(Boolean(agreedPackContractId), () => setAgreedPackContractId(null), {
+    disabled: noticeDialog.open
   });
 
   useModalEscape(reservationModalOpen, () => setReservationModalOpen(false), {
@@ -1387,6 +1415,35 @@ export function OpportunitiesPage() {
                 </section>
 
                 <section className="crm-activity-list">
+                  <h4>Agreed Pack</h4>
+                  {(opportunityContractsQuery.data?.items ?? []).length ? (
+                    <div className="crm-agreed-pack-list">
+                      {(opportunityContractsQuery.data?.items ?? []).map((contract) => (
+                        <button
+                          className="crm-agreed-pack-list-item"
+                          key={contract.id}
+                          onClick={() => setAgreedPackContractId(contract.id)}
+                          type="button"
+                        >
+                          <div>
+                            <strong>
+                              {contract.contractNo} · {contract.unit.unitCode ?? "Unit"}
+                            </strong>
+                            <span>
+                              {contract.contractStatus.name ?? contract.contractStatus.code ?? "—"} ·{" "}
+                              {contract.erpHandoffStatus}
+                            </span>
+                          </div>
+                          <span className="crm-status-pill">Open</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="crm-muted-text">No contract yet. Agreed Pack becomes available after a contract is created.</p>
+                  )}
+                </section>
+
+                <section className="crm-activity-list">
                   <h4>Notes</h4>
                   {selectedOpportunity.notes.map((note) => (
                     <article key={note.id}>
@@ -1541,6 +1598,31 @@ export function OpportunitiesPage() {
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {agreedPackContractId ? (
+        <div className="crm-modal-backdrop is-nested" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-lead-detail-wide" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>Agreed Pack</h3>
+                <p className="crm-muted-text">{opportunityAgreedPackQuery.data?.agreement.contractNo ?? "Loading..."}</p>
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={() => setAgreedPackContractId(null)} type="button">
+                Close
+              </button>
+            </div>
+            {opportunityAgreedPackQuery.isLoading ? (
+              <p className="crm-muted-text">Loading agreed pack...</p>
+            ) : opportunityAgreedPackQuery.data ? (
+              <div className="crm-opportunity-detail-body">
+                <AgreedPackView formatInBase={formatInBase} pack={opportunityAgreedPackQuery.data} />
+              </div>
+            ) : (
+              <p className="crm-muted-text">Agreed pack could not be loaded.</p>
+            )}
           </section>
         </div>
       ) : null}

@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
+import { getContractAgreedPack, listCustomerAgreedPacks } from "../api/agreed-pack";
 import {
   createBroker,
   createCustomer,
@@ -17,6 +18,7 @@ import { getCitiesByCountry, getGeographyCountries, getReferenceFamily } from ".
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE } from "../lib/list-pagination";
 import { useModalEscape } from "../hooks/useModalEscape";
+import { AgreedPackView } from "../shared/AgreedPackView";
 import { ListPagination } from "../shared/ListPagination";
 
 type CustomerTab = "customers" | "brokers";
@@ -138,7 +140,7 @@ const blankBroker: BrokerFormValues = {
 
 export function CustomersPage() {
   const queryClient = useQueryClient();
-  const { baseCurrency } = useMoneyFormatter();
+  const { baseCurrency, formatInBase } = useMoneyFormatter();
   const [activeTab, setActiveTab] = useState<CustomerTab>("customers");
   const [search, setSearch] = useState("");
   const [customerPage, setCustomerPage] = useState(1);
@@ -148,9 +150,14 @@ export function CustomersPage() {
   const [selectedBrokerId, setSelectedBrokerId] = useState<string | null>(null);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [brokerModalOpen, setBrokerModalOpen] = useState(false);
+  const [agreedPackContractId, setAgreedPackContractId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  useModalEscape(customerModalOpen, () => setCustomerModalOpen(false));
+  useModalEscape(customerModalOpen, () => {
+    setCustomerModalOpen(false);
+    setAgreedPackContractId(null);
+  });
+  useModalEscape(Boolean(agreedPackContractId), () => setAgreedPackContractId(null));
   useModalEscape(brokerModalOpen, () => setBrokerModalOpen(false));
 
   const customerForm = useForm<CustomerFormValues>({ defaultValues: blankCustomer });
@@ -185,6 +192,18 @@ export function CustomersPage() {
     queryKey: ["customer", selectedCustomerId],
     queryFn: () => getCustomer(selectedCustomerId ?? ""),
     enabled: Boolean(selectedCustomerId)
+  });
+  const customerAgreedPacksQuery = useQuery({
+    queryKey: ["customer", selectedCustomerId, "agreed-packs"],
+    queryFn: () => listCustomerAgreedPacks(selectedCustomerId ?? ""),
+    enabled: Boolean(selectedCustomerId && customerModalOpen),
+    staleTime: 15_000
+  });
+  const customerAgreedPackDetailQuery = useQuery({
+    queryKey: ["contract", agreedPackContractId, "agreed-pack"],
+    queryFn: () => getContractAgreedPack(agreedPackContractId ?? ""),
+    enabled: Boolean(agreedPackContractId),
+    staleTime: 15_000
   });
   const selectedBrokerQuery = useQuery({
     queryKey: ["broker", selectedBrokerId],
@@ -580,10 +599,73 @@ export function CustomersPage() {
                 <div><dt>Updated</dt><dd>{formatDate(selectedCustomer.updatedAt)}</dd></div>
               </dl>
             ) : null}
+            {selectedCustomer ? (
+              <section className="crm-agreed-pack" style={{ borderTop: "1px solid rgba(148,163,184,0.35)", marginTop: 16, paddingTop: 12 }}>
+                <div className="crm-agreed-pack-header">
+                  <div>
+                    <h4>Agreed Packs</h4>
+                    <p className="crm-muted-text">Open the deal pack for sales, legal, or ERP without hunting across modules.</p>
+                  </div>
+                </div>
+                {customerAgreedPacksQuery.isLoading ? (
+                  <p className="crm-muted-text">Loading packs...</p>
+                ) : customerAgreedPacksQuery.data?.items.length ? (
+                  <div className="crm-agreed-pack-list">
+                    {customerAgreedPacksQuery.data.items.map((item) => (
+                      <button
+                        className="crm-agreed-pack-list-item"
+                        key={item.packId}
+                        onClick={() => setAgreedPackContractId(item.contractId)}
+                        type="button"
+                      >
+                        <div>
+                          <strong>
+                            {item.contractNo} · {item.unitCode ?? "Unit"} · {item.projectCode ?? "Project"}
+                          </strong>
+                          <span>
+                            {item.contractStatus.name ?? item.contractStatus.code ?? "—"} · {item.completeCount}/
+                            {item.totalSections} complete
+                            {item.signedAt ? ` · Signed ${item.signedAt.slice(0, 10)}` : ""}
+                          </span>
+                        </div>
+                        <span className="crm-status-pill">Open</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="crm-muted-text">No contracts yet for this customer.</p>
+                )}
+              </section>
+            ) : null}
           </form>
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {agreedPackContractId ? (
+        <div className="crm-modal-backdrop is-nested" role="presentation">
+          <section aria-modal="true" className="crm-modal crm-management-modal crm-lead-detail-wide" role="dialog">
+            <div className="crm-panel-header">
+              <div>
+                <h3>Agreed Pack</h3>
+                <p className="crm-muted-text">{customerAgreedPackDetailQuery.data?.agreement.contractNo ?? "Loading..."}</p>
+              </div>
+              <button className="crm-secondary-button crm-fit-button" onClick={() => setAgreedPackContractId(null)} type="button">
+                Close
+              </button>
+            </div>
+            {customerAgreedPackDetailQuery.isLoading ? (
+              <p className="crm-muted-text">Loading agreed pack...</p>
+            ) : customerAgreedPackDetailQuery.data ? (
+              <div className="crm-opportunity-detail-body">
+                <AgreedPackView formatInBase={formatInBase} pack={customerAgreedPackDetailQuery.data} />
+              </div>
+            ) : (
+              <p className="crm-muted-text">Agreed pack could not be loaded.</p>
+            )}
+          </section>
+        </div>
       ) : null}
 
       {activeTab === "brokers" ? (

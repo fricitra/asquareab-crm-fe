@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { getApiErrorMessage } from "../api/auth";
+import { getContractAgreedPack } from "../api/agreed-pack";
 import { listCurrencies } from "../api/currencies";
 import {
   cancelContract,
@@ -21,6 +22,7 @@ import { listReservations } from "../api/reservations";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 import { DEFAULT_LIST_PAGE_SIZE, DROPDOWN_LIST_LIMIT } from "../lib/list-pagination";
 import { useModalEscape } from "../hooks/useModalEscape";
+import { AgreedPackView } from "../shared/AgreedPackView";
 import { CurrencyBadge } from "../shared/CurrencyBadge";
 import { FormNoticeDialog } from "../shared/FormNoticeDialog";
 import { ListPagination } from "../shared/ListPagination";
@@ -282,6 +284,12 @@ export function ContractsPage() {
     enabled: Boolean(selectedContractId && contractDetailModalOpen),
     refetchOnWindowFocus: false
   });
+  const agreedPackQuery = useQuery({
+    queryKey: ["contract", selectedContractId, "agreed-pack"],
+    queryFn: () => getContractAgreedPack(selectedContractId ?? ""),
+    enabled: Boolean(selectedContractId && contractDetailModalOpen),
+    refetchOnWindowFocus: false
+  });
   const reservationsQuery = useQuery({
     queryKey: ["reservations", "contract-select"],
     queryFn: () => listReservations({ limit: DROPDOWN_LIST_LIMIT }),
@@ -301,6 +309,7 @@ export function ContractsPage() {
     queryClient.setQueryData(["contract", contract.id], contract);
     void queryClient.invalidateQueries({ queryKey: ["contracts"] });
     void queryClient.invalidateQueries({ queryKey: ["contract", contract.id] });
+    void queryClient.invalidateQueries({ queryKey: ["contract", contract.id, "agreed-pack"] });
     void queryClient.invalidateQueries({ queryKey: ["reservations"] });
   };
 
@@ -989,6 +998,14 @@ export function ContractsPage() {
                     </div>
                   </section>
                 )}
+
+                {agreedPackQuery.isLoading ? (
+                  <p className="crm-muted-text">Loading agreed pack...</p>
+                ) : agreedPackQuery.data ? (
+                  <AgreedPackView formatInBase={formatInBase} pack={agreedPackQuery.data} />
+                ) : agreedPackQuery.isError ? (
+                  <p className="crm-muted-text">Agreed pack could not be loaded.</p>
+                ) : null}
               </div>
             ) : (
               <p className="crm-muted-text crm-opportunity-detail-body">Contract details could not be loaded.</p>
