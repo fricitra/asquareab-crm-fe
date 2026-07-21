@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useForm, Controller, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
+import { useForm, useFieldArray, Controller, type FieldValues, type Path, type UseFormRegister } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import {
   assignLead,
@@ -15,8 +15,11 @@ import {
   updateLead,
   type CreateLeadPayload,
   type Lead,
+  type LeadAddress,
   type LeadAssignableUser,
   type LeadCampaignOption,
+  type LeadDetail,
+  type LeadIdentityDocument,
   type QualifyLeadPayload
 } from "../api/leads";
 import { convertLeadToOpportunity } from "../api/opportunities";
@@ -64,12 +67,33 @@ const referenceQueryDefaults = {
   refetchOnMount: false
 } as const;
 
+type LeadAddressFormValues = {
+  addressTypeRefId: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  countryCode: string;
+  postalCode: string;
+};
+
+type LeadIdentityDocumentFormValues = {
+  identityTypeRefId: string;
+  documentNumber: string;
+  issuingCountryCode: string;
+  expiryDate: string;
+};
+
 type LeadFormValues = {
+  prospectTypeRefId: string;
+  titleRefId: string;
+  companyName: string;
   firstName: string;
   lastName: string;
   mobileNo: string;
   whatsappNo: string;
   email: string;
+  addresses: LeadAddressFormValues[];
+  identityDocuments: LeadIdentityDocumentFormValues[];
   leadSourceRefId: string;
   captureChannelRefId: string;
   campaignId: string;
@@ -146,8 +170,127 @@ function pickString(value: string) {
   return value.trim() === "" ? undefined : value.trim();
 }
 
-function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
+function blankAddress(addressTypeRefId = ""): LeadAddressFormValues {
   return {
+    addressTypeRefId,
+    addressLine1: "",
+    addressLine2: "",
+    city: "",
+    countryCode: "",
+    postalCode: ""
+  };
+}
+
+function blankIdentityDocument(): LeadIdentityDocumentFormValues {
+  return {
+    identityTypeRefId: "",
+    documentNumber: "",
+    issuingCountryCode: "",
+    expiryDate: ""
+  };
+}
+
+function requiredAddressTypeCodes(prospectTypeCode: string | undefined) {
+  return prospectTypeCode === "COMPANY" ? (["BUSINESS", "COMMUNICATION"] as const) : (["PERMANENT", "COMMUNICATION"] as const);
+}
+
+function buildDefaultAddresses(
+  prospectTypeCode: string | undefined,
+  addressTypes: ReferenceDataItem[]
+): LeadAddressFormValues[] {
+  return requiredAddressTypeCodes(prospectTypeCode).map((code) => {
+    const match = addressTypes.find((item) => item.level2Code === code);
+    return blankAddress(match?.id ?? "");
+  });
+}
+
+function mapDetailAddresses(addresses: LeadAddress[] | undefined): LeadAddressFormValues[] {
+  if (!addresses?.length) {
+    return [];
+  }
+  return addresses.map((address) => ({
+    addressTypeRefId: address.addressType.id ?? "",
+    addressLine1: address.addressLine1 ?? "",
+    addressLine2: address.addressLine2 ?? "",
+    city: address.city ?? "",
+    countryCode: address.countryCode ?? "",
+    postalCode: address.postalCode ?? ""
+  }));
+}
+
+function mapDetailIdentityDocuments(
+  documents: LeadIdentityDocument[] | undefined
+): LeadIdentityDocumentFormValues[] {
+  if (!documents?.length) {
+    return [];
+  }
+  return documents.map((document) => ({
+    identityTypeRefId: document.identityType.id ?? "",
+    documentNumber: document.documentNumber ?? "",
+    issuingCountryCode: document.issuingCountryCode ?? "",
+    expiryDate: document.expiryDate?.slice(0, 10) ?? ""
+  }));
+}
+
+function extractIdentityNumbersFromForm(
+  documents: LeadIdentityDocumentFormValues[],
+  identityTypes: ReferenceDataItem[]
+) {
+  let passportNumber: string | undefined;
+  let nationalIdNumber: string | undefined;
+  for (const document of documents) {
+    const number = document.documentNumber.trim();
+    if (!number || !document.identityTypeRefId) {
+      continue;
+    }
+    const code = identityTypes.find((item) => item.id === document.identityTypeRefId)?.level2Code;
+    if (code === "PASSPORT" && !passportNumber) {
+      passportNumber = number;
+    }
+    if (code === "NATIONAL_ID" && !nationalIdNumber) {
+      nationalIdNumber = number;
+    }
+  }
+  return { passportNumber, nationalIdNumber };
+}
+
+function formatAddressLine(address: LeadAddress) {
+  return [
+    address.addressLine1,
+    address.addressLine2,
+    address.city,
+    address.postalCode,
+    address.countryName ?? address.countryCode
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
+  const addresses = values.addresses
+    .filter((address) => address.addressTypeRefId.trim() !== "" && address.addressLine1.trim() !== "")
+    .map((address) => ({
+      addressTypeRefId: address.addressTypeRefId.trim(),
+      addressLine1: address.addressLine1.trim(),
+      addressLine2: pickString(address.addressLine2),
+      city: pickString(address.city),
+      countryCode: pickString(address.countryCode),
+      postalCode: pickString(address.postalCode)
+    }));
+
+  const identityDocuments = values.identityDocuments
+    .filter((document) => document.identityTypeRefId.trim() !== "" && document.documentNumber.trim() !== "")
+    .map((document) => ({
+      identityTypeRefId: document.identityTypeRefId.trim(),
+      documentNumber: document.documentNumber.trim(),
+      issuingCountryCode: pickString(document.issuingCountryCode),
+      expiryDate: pickString(document.expiryDate)
+    }));
+
+  return {
+    prospectTypeRefId: pickString(values.prospectTypeRefId),
+    titleRefId: pickString(values.titleRefId),
+    companyName: pickString(values.companyName),
     firstName: pickString(values.firstName),
     lastName: pickString(values.lastName),
     mobileNo: pickString(normalizePhoneNumber(values.mobileNo)),
@@ -187,7 +330,9 @@ function toCreatePayload(values: LeadFormValues): CreateLeadPayload {
     purchaseTimelineRefId: pickString(values.purchaseTimelineRefId),
     qualificationNotes: pickString(values.qualificationNotes),
     scoreTotal: pickNumber(values.scoreTotal),
-    remarks: pickString(values.remarks)
+    remarks: pickString(values.remarks),
+    addresses: addresses.length > 0 ? addresses : undefined,
+    identityDocuments: identityDocuments.length > 0 ? identityDocuments : undefined
   };
 }
 
@@ -302,11 +447,16 @@ function leadWorkflowSteps(lead: Lead, formatBudget: (max: number | null, curren
 }
 
 const blankLeadForm: LeadFormValues = {
+  prospectTypeRefId: "",
+  titleRefId: "",
+  companyName: "",
   firstName: "",
   lastName: "",
   mobileNo: "",
   whatsappNo: "",
   email: "",
+  addresses: [],
+  identityDocuments: [],
   leadSourceRefId: "",
   captureChannelRefId: "",
   campaignId: "",
@@ -514,6 +664,30 @@ export function LeadsPage() {
     enabled: isLeadEditorOpen,
     ...referenceQueryDefaults
   });
+  const prospectTypesQuery = useQuery({
+    queryKey: ["reference", "LEAD", "PROSPECT_TYPE"],
+    queryFn: () => getReferenceFamily("LEAD", "PROSPECT_TYPE"),
+    enabled: isLeadEditorOpen,
+    ...referenceQueryDefaults
+  });
+  const titlesQuery = useQuery({
+    queryKey: ["reference", "LEAD", "TITLE"],
+    queryFn: () => getReferenceFamily("LEAD", "TITLE"),
+    enabled: isLeadEditorOpen,
+    ...referenceQueryDefaults
+  });
+  const addressTypesQuery = useQuery({
+    queryKey: ["reference", "LEAD", "ADDRESS_TYPE"],
+    queryFn: () => getReferenceFamily("LEAD", "ADDRESS_TYPE"),
+    enabled: isLeadEditorOpen,
+    ...referenceQueryDefaults
+  });
+  const identityDocTypesQuery = useQuery({
+    queryKey: ["reference", "LEAD", "IDENTITY_DOC_TYPE"],
+    queryFn: () => getReferenceFamily("LEAD", "IDENTITY_DOC_TYPE"),
+    enabled: isLeadEditorOpen,
+    ...referenceQueryDefaults
+  });
   const leadRatingsQuery = useQuery({
     queryKey: ["reference", "LEAD", "RATING"],
     queryFn: () => getReferenceFamily("LEAD", "RATING"),
@@ -671,6 +845,16 @@ export function LeadsPage() {
     mode: "onTouched"
   });
   const createFormErrors = createForm.formState.errors;
+  const addressFields = useFieldArray({
+    control: createForm.control,
+    name: "addresses"
+  });
+  const { replace: replaceAddresses } = addressFields;
+  const identityDocumentFields = useFieldArray({
+    control: createForm.control,
+    name: "identityDocuments"
+  });
+  const previousProspectTypeRef = useRef("");
 
   const closeNotice = () => {
     setNoticeDialog((current) => ({ ...current, open: false }));
@@ -697,10 +881,18 @@ export function LeadsPage() {
   };
 
   const selectedLeadSourceRefId = createForm.watch("leadSourceRefId");
+  const selectedProspectTypeRefId = createForm.watch("prospectTypeRefId");
+  const watchedAddresses = createForm.watch("addresses");
   const selectedLeadSourceName = useMemo(
     () => (leadSourcesQuery.data ?? []).find((item) => item.id === selectedLeadSourceRefId)?.level2Name ?? null,
     [leadSourcesQuery.data, selectedLeadSourceRefId]
   );
+  const selectedProspectTypeCode = useMemo(
+    () => (prospectTypesQuery.data ?? []).find((item) => item.id === selectedProspectTypeRefId)?.level2Code,
+    [prospectTypesQuery.data, selectedProspectTypeRefId]
+  );
+  const isCompanyProspect = selectedProspectTypeCode === "COMPANY";
+  const primaryAddressTypeCode = isCompanyProspect ? "BUSINESS" : "PERMANENT";
   const selectedLeadChannelFamily = useMemo(
     () => resolveLeadChannelFamily(selectedLeadSourceName),
     [selectedLeadSourceName]
@@ -757,6 +949,64 @@ export function LeadsPage() {
     }
     previousResidenceRef.current = selectedResidenceCountryCode;
   }, [createForm, selectedResidenceCountryCode]);
+
+  useEffect(() => {
+    if (!leadCreateModalOpen || !selectedProspectTypeRefId || !selectedProspectTypeCode) {
+      return;
+    }
+    const addressTypes = addressTypesQuery.data ?? [];
+    if (addressTypes.length === 0) {
+      return;
+    }
+    if (previousProspectTypeRef.current === selectedProspectTypeRefId) {
+      const currentAddresses = createForm.getValues("addresses") ?? [];
+      if (currentAddresses.length > 0) {
+        return;
+      }
+    }
+    replaceAddresses(buildDefaultAddresses(selectedProspectTypeCode, addressTypes));
+    previousProspectTypeRef.current = selectedProspectTypeRefId;
+  }, [
+    addressTypesQuery.data,
+    createForm,
+    leadCreateModalOpen,
+    replaceAddresses,
+    selectedProspectTypeCode,
+    selectedProspectTypeRefId
+  ]);
+
+  const copyPrimaryAddressToCommunication = () => {
+    const addressTypes = addressTypesQuery.data ?? [];
+    const addresses = createForm.getValues("addresses") ?? [];
+    const primaryTypeId = addressTypes.find((item) => item.level2Code === primaryAddressTypeCode)?.id;
+    const communicationTypeId = addressTypes.find((item) => item.level2Code === "COMMUNICATION")?.id;
+    if (!primaryTypeId || !communicationTypeId) {
+      showNotice("Address Types Missing", "Address type reference data is not available yet.", "error");
+      return;
+    }
+    const primary = addresses.find((address) => address.addressTypeRefId === primaryTypeId);
+    const communicationIndex = addresses.findIndex((address) => address.addressTypeRefId === communicationTypeId);
+    if (!primary) {
+      showNotice(
+        "Primary Address Missing",
+        `Fill the ${isCompanyProspect ? "Business" : "Permanent"} address before copying.`,
+        "error"
+      );
+      return;
+    }
+    if (communicationIndex < 0) {
+      showNotice("Communication Address Missing", "Communication address row is not available.", "error");
+      return;
+    }
+    createForm.setValue(`addresses.${communicationIndex}`, {
+      addressTypeRefId: communicationTypeId,
+      addressLine1: primary.addressLine1,
+      addressLine2: primary.addressLine2,
+      city: primary.city,
+      countryCode: primary.countryCode,
+      postalCode: primary.postalCode
+    });
+  };
 
   const selectedQualifyResidenceCountryCode = qualifyForm.watch("currentResidenceCountryCode");
   const deferredQualifyCitySearch = useDeferredValue(qualifyForm.watch("city"));
@@ -915,7 +1165,7 @@ export function LeadsPage() {
     }
   });
 
-  const selectedLead = leadDetailQuery.data;
+  const selectedLead = leadDetailQuery.data as LeadDetail | undefined;
 
   useEffect(() => {
     if (!selectedLead) {
@@ -940,12 +1190,14 @@ export function LeadsPage() {
     setLeadCreateModalOpen(false);
     setEditingLeadId(null);
     previousResidenceRef.current = "";
+    previousProspectTypeRef.current = "";
     createForm.reset({ ...blankLeadForm, preferredCurrencyCode: baseCurrency, dateGenerated: todayIsoDate(), assignedToUserId: user?.id ?? "" });
   };
 
   const openCreateLeadModal = () => {
     setEditingLeadId(null);
     previousResidenceRef.current = "";
+    previousProspectTypeRef.current = "";
     createForm.reset({
       ...blankLeadForm,
       preferredCurrencyCode: baseCurrency,
@@ -992,12 +1244,18 @@ export function LeadsPage() {
       setSelectedLeadId(detail.id);
       previousLeadSourceRef.current = detail.leadSource.id ?? "";
       previousResidenceRef.current = detail.currentResidenceCountry.code ?? "";
+      previousProspectTypeRef.current = detail.prospectType?.id ?? "";
       createForm.reset({
+        prospectTypeRefId: detail.prospectType?.id ?? "",
+        titleRefId: detail.title?.id ?? "",
+        companyName: detail.companyName ?? "",
         firstName: detail.firstName ?? detail.leadTitle ?? "",
         lastName: detail.lastName ?? detail.contactName ?? "",
         mobileNo: detail.mobileNo ?? "",
         whatsappNo: detail.whatsappNo ?? "",
         email: detail.email ?? "",
+        addresses: mapDetailAddresses(detail.addresses),
+        identityDocuments: mapDetailIdentityDocuments(detail.identityDocuments),
         leadSourceRefId: detail.leadSource.id ?? "",
         captureChannelRefId: detail.captureChannel.id ?? "",
         campaignId: detail.campaign.id ?? "",
@@ -1089,6 +1347,49 @@ export function LeadsPage() {
 
   const onCreate = createForm.handleSubmit(async (values) => {
     const campaignHasOptions = (campaignsQuery.data ?? []).length > 0;
+    const prospectMissing: string[] = [];
+    if (!values.prospectTypeRefId.trim()) {
+      prospectMissing.push("Prospect Type");
+    }
+    if (!values.titleRefId.trim()) {
+      prospectMissing.push("Title");
+    }
+    if (!values.firstName.trim()) {
+      prospectMissing.push("First Name");
+    }
+    if (!values.lastName.trim()) {
+      prospectMissing.push("Last Name");
+    }
+    const prospectTypeCode =
+      (prospectTypesQuery.data ?? []).find((item) => item.id === values.prospectTypeRefId)?.level2Code ??
+      selectedProspectTypeCode;
+    if (prospectTypeCode === "COMPANY" && !values.companyName.trim()) {
+      prospectMissing.push("Company Name");
+    }
+
+    const addressTypes = addressTypesQuery.data ?? [];
+    for (const code of requiredAddressTypeCodes(prospectTypeCode)) {
+      const typeId = addressTypes.find((item) => item.level2Code === code)?.id;
+      const label =
+        addressTypes.find((item) => item.level2Code === code)?.level2Name ??
+        (code === "BUSINESS" ? "Business Address" : code === "PERMANENT" ? "Permanent Address" : "Communication Address");
+      const address = (values.addresses ?? []).find((item) => item.addressTypeRefId === typeId);
+      if (!address || !address.addressLine1.trim()) {
+        prospectMissing.push(`${label} (line 1)`);
+      }
+    }
+
+    if (prospectMissing.length > 0) {
+      showNotice(
+        "Required Fields Missing",
+        ["Please complete the required Prospect Information fields:", ...prospectMissing.map((field) => `• ${field}`)].join(
+          "\n"
+        ),
+        "error"
+      );
+      return;
+    }
+
     const validation = validateMandatoryLeadFields(values);
     if (!validation.valid) {
       const message = buildLeadValidationMessage(validation);
@@ -1103,11 +1404,17 @@ export function LeadsPage() {
     setIsValidatingLead(true);
 
     try {
+      const { passportNumber, nationalIdNumber } = extractIdentityNumbersFromForm(
+        values.identityDocuments ?? [],
+        identityDocTypesQuery.data ?? []
+      );
       const duplicate = await checkLeadDuplicate({
         firstName: values.firstName.trim(),
         lastName: values.lastName.trim(),
         mobileNo: normalizePhoneNumber(values.mobileNo),
         email: normalizeEmailAddress(values.email),
+        passportNumber,
+        nationalIdNumber,
         excludeLeadId: editingLeadId ?? undefined
       });
 
@@ -1302,7 +1609,27 @@ export function LeadsPage() {
             <form className="crm-lead-modal-form" onSubmit={onCreate}>
               <div className="crm-lead-modal-body">
                 <div className="crm-form crm-two-col">
-                  <FormSectionTitle>Contact</FormSectionTitle>
+                  <FormSectionTitle>Prospect Information</FormSectionTitle>
+                  <SelectField
+                    label="Prospect Type"
+                    name="prospectTypeRefId"
+                    options={prospectTypesQuery.data ?? []}
+                    register={createForm.register}
+                    required
+                  />
+                  <SelectField
+                    label="Title"
+                    name="titleRefId"
+                    options={titlesQuery.data ?? []}
+                    register={createForm.register}
+                    required
+                  />
+                  {isCompanyProspect ? (
+                    <label className="crm-field crm-form-wide">
+                      <FieldLabel required>Company Name</FieldLabel>
+                      <input className="crm-input" {...createForm.register("companyName")} />
+                    </label>
+                  ) : null}
                   <label className="crm-field">
                     <FieldLabel required>First Name</FieldLabel>
                     <input
@@ -1318,6 +1645,69 @@ export function LeadsPage() {
                     <FieldLabel required>Last Name</FieldLabel>
                     <input className="crm-input" {...createForm.register("lastName")} />
                   </label>
+
+                  <div className="crm-form-wide">
+                    <div className="crm-panel-header" style={{ padding: 0, marginBottom: "0.75rem" }}>
+                      <h4 className="crm-form-section-title" style={{ margin: 0 }}>
+                        Identity Documents
+                      </h4>
+                      <button
+                        className="crm-secondary-button crm-fit-button"
+                        onClick={() => identityDocumentFields.append(blankIdentityDocument())}
+                        type="button"
+                      >
+                        Add Document
+                      </button>
+                    </div>
+                    {identityDocumentFields.fields.length === 0 ? (
+                      <p className="crm-muted-text">Optional. Add passport, national ID, or other identity documents.</p>
+                    ) : null}
+                    {identityDocumentFields.fields.map((field, index) => (
+                      <div className="crm-two-col" key={field.id} style={{ marginBottom: "0.75rem" }}>
+                        <SelectField
+                          label="Identity Type"
+                          name={`identityDocuments.${index}.identityTypeRefId`}
+                          options={identityDocTypesQuery.data ?? []}
+                          register={createForm.register}
+                        />
+                        <label className="crm-field">
+                          <FieldLabel>Document Number</FieldLabel>
+                          <input className="crm-input" {...createForm.register(`identityDocuments.${index}.documentNumber`)} />
+                        </label>
+                        <SelectField
+                          label="Issuing Country"
+                          name={`identityDocuments.${index}.issuingCountryCode`}
+                          options={countryOptions}
+                          register={createForm.register}
+                        />
+                        <label className="crm-field">
+                          <FieldLabel>Expiry Date</FieldLabel>
+                          <Controller
+                            control={createForm.control}
+                            name={`identityDocuments.${index}.expiryDate`}
+                            render={({ field: dateField }) => (
+                              <DateField
+                                onBlur={dateField.onBlur}
+                                onChange={dateField.onChange}
+                                ref={dateField.ref}
+                                value={dateField.value}
+                              />
+                            )}
+                          />
+                        </label>
+                        <div className="crm-inline-actions crm-form-wide">
+                          <button
+                            className="crm-secondary-button crm-fit-button"
+                            onClick={() => identityDocumentFields.remove(index)}
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                   <label className="crm-field">
                     <FieldLabel required>Mobile</FieldLabel>
                     <input
@@ -1361,7 +1751,69 @@ export function LeadsPage() {
                       })}
                     />
                   </label>
-                  <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={createForm.register} />
+                  <SelectField
+                    label="Nationality / Citizenship Country"
+                    name="nationalityCode"
+                    options={countryOptions}
+                    register={createForm.register}
+                    required
+                  />
+
+                  <div className="crm-form-wide">
+                    <div className="crm-panel-header" style={{ padding: 0, marginBottom: "0.75rem" }}>
+                      <h4 className="crm-form-section-title" style={{ margin: 0 }}>
+                        Addresses
+                      </h4>
+                      {selectedProspectTypeRefId ? (
+                        <button
+                          className="crm-secondary-button crm-fit-button"
+                          onClick={copyPrimaryAddressToCommunication}
+                          type="button"
+                        >
+                          {isCompanyProspect ? "Use same as Business" : "Use same as Permanent"}
+                        </button>
+                      ) : null}
+                    </div>
+                    {!selectedProspectTypeRefId ? (
+                      <p className="crm-muted-text">Select a prospect type to capture required addresses.</p>
+                    ) : null}
+                    {addressFields.fields.map((field, index) => {
+                      const typeId = watchedAddresses?.[index]?.addressTypeRefId;
+                      const typeName =
+                        (addressTypesQuery.data ?? []).find((item) => item.id === typeId)?.level2Name ??
+                        `Address ${index + 1}`;
+                      return (
+                        <div className="crm-two-col" key={field.id} style={{ marginBottom: "0.85rem" }}>
+                          <p className="crm-form-wide crm-muted-text" style={{ margin: 0 }}>
+                            <strong>{typeName}</strong>
+                          </p>
+                          <input type="hidden" {...createForm.register(`addresses.${index}.addressTypeRefId`)} />
+                          <label className="crm-field crm-form-wide">
+                            <FieldLabel required>Address Line 1</FieldLabel>
+                            <input className="crm-input" {...createForm.register(`addresses.${index}.addressLine1`)} />
+                          </label>
+                          <label className="crm-field crm-form-wide">
+                            <FieldLabel>Address Line 2</FieldLabel>
+                            <input className="crm-input" {...createForm.register(`addresses.${index}.addressLine2`)} />
+                          </label>
+                          <label className="crm-field">
+                            <FieldLabel>City</FieldLabel>
+                            <input className="crm-input" {...createForm.register(`addresses.${index}.city`)} />
+                          </label>
+                          <SelectField
+                            label="Country"
+                            name={`addresses.${index}.countryCode`}
+                            options={countryOptions}
+                            register={createForm.register}
+                          />
+                          <label className="crm-field">
+                            <FieldLabel>Postal Code</FieldLabel>
+                            <input className="crm-input" {...createForm.register(`addresses.${index}.postalCode`)} />
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </div>
 
                   <FormSectionTitle>Source & Campaign</FormSectionTitle>
                   <SelectField label="Lead Source" name="leadSourceRefId" options={leadSourcesQuery.data ?? []} register={createForm.register} required />
@@ -1419,7 +1871,7 @@ export function LeadsPage() {
                   </label>
 
                   <FormSectionTitle>Profile & Preferences</FormSectionTitle>
-                  <SelectField label="Nationality / Citizenship Country" name="nationalityCode" options={countryOptions} register={createForm.register} required />
+                  <SelectField label="Gender" name="genderRefId" options={gendersQuery.data ?? []} register={createForm.register} />
                   <SelectField label="Country" name="countryCode" options={countryOptions} register={createForm.register} required />
                   <SelectField
                     label="Current Residence"
@@ -1562,6 +2014,20 @@ export function LeadsPage() {
                     <span>{selectedLead.leadNo}</span>
                     <ul className="crm-detail-facts">
                       <li>
+                        <span className="crm-detail-fact-label">Prospect Type</span>
+                        <span className="crm-detail-fact-value">{selectedLead.prospectType?.name ?? "-"}</span>
+                      </li>
+                      <li>
+                        <span className="crm-detail-fact-label">Title</span>
+                        <span className="crm-detail-fact-value">{selectedLead.title?.name ?? "-"}</span>
+                      </li>
+                      {selectedLead.companyName ? (
+                        <li>
+                          <span className="crm-detail-fact-label">Company</span>
+                          <span className="crm-detail-fact-value">{selectedLead.companyName}</span>
+                        </li>
+                      ) : null}
+                      <li>
                         <span className="crm-detail-fact-label">Phone</span>
                         <span className="crm-detail-fact-value">{selectedLead.mobileNo ?? "-"}</span>
                       </li>
@@ -1588,6 +2054,38 @@ export function LeadsPage() {
                         <span className="crm-detail-fact-value">{selectedLead.assignedToUser.name ?? "Unassigned"}</span>
                       </li>
                     </ul>
+                    {(selectedLead.addresses?.length ?? 0) > 0 || (selectedLead.identityDocuments?.length ?? 0) > 0 ? (
+                      <div style={{ marginTop: "0.85rem" }}>
+                        {(selectedLead.addresses ?? []).length > 0 ? (
+                          <ul className="crm-detail-facts">
+                            {(selectedLead.addresses ?? []).map((address, index) => (
+                              <li key={address.id ?? `${address.addressType.id ?? "address"}-${index}`}>
+                                <span className="crm-detail-fact-label">{address.addressType.name ?? "Address"}</span>
+                                <span className="crm-detail-fact-value">{formatAddressLine(address) || "-"}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {(selectedLead.identityDocuments ?? []).length > 0 ? (
+                          <ul className="crm-detail-facts" style={{ marginTop: "0.35rem" }}>
+                            {(selectedLead.identityDocuments ?? []).map((document, index) => (
+                              <li key={document.id ?? `${document.identityType.id ?? "doc"}-${index}`}>
+                                <span className="crm-detail-fact-label">{document.identityType.name ?? "Identity"}</span>
+                                <span className="crm-detail-fact-value">
+                                  {[
+                                    document.documentNumber,
+                                    document.issuingCountryName ?? document.issuingCountryCode,
+                                    document.expiryDate ? `exp ${document.expiryDate.slice(0, 10)}` : null
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ") || "-"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   <span className="crm-status-pill">{selectedLead.leadStatus.name ?? selectedLead.status}</span>
                 </div>
@@ -1598,9 +2096,20 @@ export function LeadsPage() {
                     nowLabel="Lead complete"
                     nowSummary="This lead has been moved to an opportunity."
                     nextLabel={MOVE_TO_CTA.opportunity}
-                    nextSummary="Open Opportunities to continue site visit and negotiation."
+                    nextSummary="Open the linked opportunity to continue site visit and negotiation."
                   >
-                    <button className="crm-primary-button crm-fit-button" onClick={() => navigate("/opportunities")} type="button">
+                    <button
+                      className="crm-primary-button crm-fit-button"
+                      onClick={() => {
+                        const opportunityId = selectedLead.opportunity?.id?.trim();
+                        navigate(
+                          opportunityId
+                            ? `/opportunities?selected=${encodeURIComponent(opportunityId)}`
+                            : "/opportunities"
+                        );
+                      }}
+                      type="button"
+                    >
                       Open Opportunities
                     </button>
                   </ContinuePanel>

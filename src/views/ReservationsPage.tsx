@@ -68,11 +68,14 @@ function reservationWorkflowSteps(
 ): WorkflowStep[] {
   const isCancelled = reservation.reservationStatus.code === "CANCELLED" || reservation.reservationStatus.code === "SUPERSEDED";
   const isApproved = reservation.reservationStatus.code === "APPROVED";
+  const isConverted = reservation.reservationStatus.code === "CONVERTED_TO_CONTRACT";
+  const chapterComplete = isApproved || isConverted;
+
   return [
     {
       id: "requested",
       title: "Requested",
-      status: isCancelled || isApproved ? "completed" : "current",
+      status: isCancelled ? "blocked" : chapterComplete ? "completed" : "current",
       timestamp: reservation.createdAt,
       user: reservation.createdBy.name,
       role: reservation.createdBy.role,
@@ -90,27 +93,32 @@ function reservationWorkflowSteps(
     {
       id: "approved",
       title: "Approved",
-      status: isCancelled ? "blocked" : isApproved ? "current" : "next",
-      timestamp: isApproved ? reservation.updatedAt : null,
-      user: isApproved ? reservation.updatedBy.name : null,
-      role: isApproved ? reservation.updatedBy.role : null,
-      summary: isApproved ? reservation.remarks ?? "Reservation has been approved." : "Approve the reservation after verifying buyer and unit details.",
+      status: isCancelled ? "blocked" : chapterComplete ? "completed" : "next",
+      timestamp: isApproved || isConverted ? reservation.updatedAt : null,
+      user: isApproved || isConverted ? reservation.updatedBy.name : null,
+      role: isApproved || isConverted ? reservation.updatedBy.role : null,
+      summary: chapterComplete
+        ? reservation.remarks ?? "Reservation has been approved."
+        : "Approve the reservation after verifying buyer and unit details.",
       details: [
         { label: "Current Status", value: reservation.reservationStatus.name },
         { label: "Active", value: reservation.isActive ? "Yes" : "No" }
       ]
     },
     {
-      id: "cancelled",
-      title: "Cancelled",
-      status: isCancelled ? "current" : "next",
-      timestamp: isCancelled ? reservation.updatedAt : null,
-      user: isCancelled ? reservation.updatedBy.name : null,
-      role: isCancelled ? reservation.updatedBy.role : null,
-      summary: isCancelled ? reservation.remarks : "Use this action only when reservation should be released.",
+      id: "moved-to-proposal",
+      title: "Moved to Proposal",
+      status: isCancelled ? "blocked" : chapterComplete ? "completed" : "next",
+      timestamp: chapterComplete ? reservation.updatedAt : null,
+      user: chapterComplete ? reservation.updatedBy.name : null,
+      role: chapterComplete ? reservation.updatedBy.role : null,
+      summary: chapterComplete
+        ? "Reservation chapter is complete. Continue in Proposals."
+        : `Approve the reservation, then use ${MOVE_TO_CTA.proposal}.`,
       details: [
-        { label: "Status", value: reservation.reservationStatus.name },
-        { label: "Unit Released", value: isCancelled ? "Yes" : "No" }
+        { label: "Next", value: MOVE_TO_CTA.proposal },
+        { label: "Reservation", value: reservation.reservationNo },
+        { label: "Unit", value: reservation.unit.unitCode }
       ]
     }
   ];
@@ -685,10 +693,10 @@ export function ReservationsPage() {
                 <WorkflowTracker showDetail={false} steps={reservationWorkflowSteps(selectedReservation, formatInBase)} />
                 {selectedReservation.reservationStatus.code === "APPROVED" && selectedReservation.opportunity.id ? (
                   <ContinuePanel
-                    nowLabel="Approved"
+                    nowLabel="Reservation complete"
                     nowSummary="Reservation chapter is complete. Unit remains held for this buyer."
                     nextLabel={MOVE_TO_CTA.proposal}
-                    nextSummary="Create the commercial proposal from this reservation, or cancel to release the unit and cascade any linked proposal/contract."
+                    nextSummary="Open Proposals to create the commercial proposal from this reservation."
                     dataNeeded="Proposal price, discount, and validity."
                     notesHint={
                       selectedReservation.remarks?.trim()

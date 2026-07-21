@@ -348,7 +348,7 @@ function proposalWorkflowSteps(
     {
       id: "accepted",
       title: "Accepted",
-      status: isRejected ? "blocked" : isAccepted ? "current" : "next",
+      status: isRejected ? "blocked" : isAccepted ? "completed" : "next",
       timestamp: proposal.acceptedAt,
       user: proposal.acceptedBy.name,
       role: null,
@@ -357,6 +357,22 @@ function proposalWorkflowSteps(
         { label: "Accepted At", value: formatDate(proposal.acceptedAt) },
         { label: "Price Basis", value: proposal.priceBasis.name },
         { label: "Status", value: proposal.proposalStatus.name }
+      ]
+    },
+    {
+      id: "moved-to-contract",
+      title: "Moved to Contract",
+      status: isRejected ? "blocked" : isAccepted ? "completed" : "next",
+      timestamp: isAccepted ? proposal.acceptedAt : null,
+      user: isAccepted ? proposal.acceptedBy.name : null,
+      role: null,
+      summary: isAccepted
+        ? "Proposal chapter is complete. Continue in Contracts."
+        : `Accept the proposal, then use ${MOVE_TO_CTA.contract}.`,
+      details: [
+        { label: "Next", value: MOVE_TO_CTA.contract },
+        { label: "Proposal", value: proposal.proposalNo },
+        { label: "Proposed Price", value: formatValue(proposal.proposedPrice, proposal.currencyCode) }
       ]
     }
   ];
@@ -1368,7 +1384,7 @@ export function ProposalsPage() {
                     <section className="crm-next-action">
                       <div>
                         <span className="crm-label">Close-Off Stage</span>
-                        <strong>Accepted</strong>
+                        <strong>Moved to Contract</strong>
                         <p>Proposal chapter is complete. {MOVE_TO_CTA.contract} when ready.</p>
                       </div>
                       <div>

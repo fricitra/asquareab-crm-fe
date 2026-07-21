@@ -104,8 +104,8 @@ function contractNextAction(contract: Contract) {
   }
   if (contract.erpHandoffStatus === "HANDED_OFF") {
     return {
-      title: "Complete",
-      summary: "The contract has reached the CRM baseline close-off stage. ERP has accepted the handoff.",
+      title: "Moved to ERP",
+      summary: "Contract chapter is complete. ERP has accepted the handoff.",
       dataNeeded: "None."
     };
   }
@@ -220,13 +220,16 @@ function contractWorkflowSteps(
     },
     {
       id: "handed-off",
-      title: "Handed Off",
-      status: isCancelled ? "blocked" : handedOff ? "current" : "next",
+      title: "Moved to ERP",
+      status: isCancelled ? "blocked" : handedOff ? "completed" : "next",
       timestamp: contract.erpHandoff?.handedOffAt ?? null,
       user: contract.updatedBy.name,
       role: contract.updatedBy.role,
-      summary: handedOff ? "ERP handoff has been marked complete." : "Mark complete after ERP accepts the contract payload.",
+      summary: handedOff
+        ? "Contract chapter is complete. ERP handoff has been marked complete."
+        : `Complete ERP handoff using ${MOVE_TO_CTA.erp}.`,
       details: [
+        { label: "Next", value: MOVE_TO_CTA.erp },
         { label: "ERP Contract", value: contract.erpContractId },
         { label: "Last Error", value: contract.erpHandoff?.errorMessage }
       ]
@@ -988,7 +991,7 @@ export function ContractsPage() {
                         <section className="crm-next-action">
                           <div>
                             <span className="crm-label">Close-Off Stage</span>
-                            <strong>Handed Off</strong>
+                            <strong>Moved to ERP</strong>
                             <p>ERP has accepted the contract payload. CRM contract workflow is complete.</p>
                           </div>
                           <div>
@@ -1082,7 +1085,7 @@ export function ContractsPage() {
                   <section className="crm-next-action">
                     <div>
                       <span className="crm-label">Close-Off Stage</span>
-                      <strong>Handed Off</strong>
+                      <strong>Moved to ERP</strong>
                       <p>Contract workflow is complete for this baseline.</p>
                     </div>
                     <div>

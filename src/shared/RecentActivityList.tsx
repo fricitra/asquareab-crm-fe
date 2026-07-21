@@ -1,6 +1,17 @@
 import type { DashboardActivity } from "../api/dashboard";
 import { useMoneyFormatter } from "../hooks/useCurrencyContext";
 
+function formatActivityWhen(value: string | null) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleString();
+}
+
 export function RecentActivityList({ items }: { items: DashboardActivity[] }) {
   const { formatInBase } = useMoneyFormatter();
 
@@ -9,11 +20,13 @@ export function RecentActivityList({ items }: { items: DashboardActivity[] }) {
   }
 
   return (
-    <div className="crm-dashboard-activity crm-dashboard-record-list">
+    <div className="crm-dashboard-activity crm-dashboard-record-list crm-recent-activity-list">
       <div className="crm-dashboard-record-head">
         <span>S.No.</span>
         <span>Record</span>
         <span>Details</span>
+        <span>User</span>
+        <span>Date / Time</span>
       </div>
       {items.map((item, index) => (
         <article key={`${item.activityType}-${item.id}`}>
@@ -26,13 +39,13 @@ export function RecentActivityList({ items }: { items: DashboardActivity[] }) {
           </div>
           <div>
             <span>{item.title ?? "-"}</span>
-            <span>
-              {item.amount
-                ? formatInBase(item.amount, item.currencyCode)
-                : item.happenedAt
-                  ? new Date(item.happenedAt).toLocaleString()
-                  : "-"}
-            </span>
+            <span>{item.amount ? formatInBase(item.amount, item.currencyCode) : "-"}</span>
+          </div>
+          <div>
+            <span>{item.performedBy?.trim() || "-"}</span>
+          </div>
+          <div>
+            <span>{formatActivityWhen(item.happenedAt)}</span>
           </div>
         </article>
       ))}

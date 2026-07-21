@@ -31,6 +31,7 @@ export type DashboardActivity = {
   amount: number;
   currencyCode: string | null;
   happenedAt: string | null;
+  performedBy: string | null;
 };
 
 export type DashboardAttentionItem = {

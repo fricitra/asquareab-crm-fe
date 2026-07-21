@@ -47,7 +47,7 @@ type NoteFormValues = {
 
 type SiteVisitFormValues = {
   visitDate: string;
-  visitType: "IN_PERSON" | "VIRTUAL";
+  visitType: string;
   proposedUnitCode: string;
   remarks: string;
 };
@@ -65,8 +65,15 @@ function toFormDateTime(value: string | null | undefined) {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
 
-function visitTypeLabel(visitType: string | null | undefined) {
-  return visitType === "VIRTUAL" ? "Virtual" : "In-person";
+function visitTypeLabel(
+  visitType: string | null | undefined,
+  options?: Array<{ level2Code: string; level2Name: string }>
+) {
+  if (!visitType) {
+    return "-";
+  }
+  const match = options?.find((item) => item.level2Code === visitType);
+  return match?.level2Name ?? visitType.replace(/_/g, " ");
 }
 
 function visitStatusLabel(status: string | null | undefined) {
@@ -130,7 +137,7 @@ function formatDate(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
 }
 
-const opportunityForwardStages = ["Open", "Qualified", "Site Visit", "Negotiation", "Reservation Ready", "Proposal"] as const;
+const opportunityForwardStages = ["Open", "Qualified", "Site Visit", "Negotiation", "Reservation Ready"] as const;
 
 function opportunityWorkflowSteps(
   opportunity: OpportunityDetail,
@@ -151,9 +158,9 @@ function opportunityWorkflowSteps(
 
   const buildForwardStageStep = (stageName: (typeof opportunityForwardStages)[number], forwardIndex: number): WorkflowStep => {
     const history = historyByStage.get(stageName);
-    const isCurrent = !isLost && stageName === currentStageName;
-    const isPast = currentForwardIndex > forwardIndex;
-    const isCompleted = isPast || Boolean(history);
+    const isCurrent = !isLost && !hasActiveReservation && stageName === currentStageName;
+    const isPast = currentForwardIndex > forwardIndex || (hasActiveReservation && currentForwardIndex >= forwardIndex);
+    const isCompleted = isPast || Boolean(history) || (hasActiveReservation && forwardIndex <= opportunityForwardStages.indexOf("Reservation Ready"));
     const status: WorkflowStep["status"] = isCurrent ? "current" : isCompleted ? "completed" : isLost ? "blocked" : "next";
 
     return {
@@ -172,17 +179,17 @@ function opportunityWorkflowSteps(
               ? "Complete the site visit with outcome notes to advance to Negotiation."
               : stageName === "Negotiation"
                 ? "Capture negotiation notes to advance automatically to Reservation Ready."
-            : stageName === "Reservation Ready" && !hasActiveReservation
-            ? "Add notes, then create the reservation from the action below."
-            : opportunity.remarks
+                : stageName === "Reservation Ready"
+                  ? "Add notes, then create the reservation from the action below."
+                  : opportunity.remarks
           : forwardIndex === currentForwardIndex + 1
             ? stageName === "Site Visit"
               ? "Schedule a site visit (in-person or virtual) to enter this stage."
               : stageName === "Negotiation"
                 ? "Completes automatically after a site visit is marked Completed."
-              : stageName === "Reservation Ready"
-                ? "Capture negotiation notes to enter this stage."
-              : "This is the next suggested workflow stage."
+                : stageName === "Reservation Ready"
+                  ? "Capture negotiation notes to enter this stage."
+                  : "This is the next suggested workflow stage."
             : null),
       details: [
         { label: "Probability", value: history?.probabilityPercent ?? (isCurrent ? opportunity.probabilityPercent : null) },
@@ -197,51 +204,33 @@ function opportunityWorkflowSteps(
   };
 
   const reservationReadyIndex = opportunityForwardStages.indexOf("Reservation Ready");
-  const reservedIsCurrent = !isLost && currentStageName === "Reservation Ready" && hasActiveReservation;
-  const reservedIsCompleted = hasActiveReservation && (currentForwardIndex > reservationReadyIndex || currentStageName === "Proposal");
-  const reservedStatus: WorkflowStep["status"] = isLost
+  const movedToReservationStatus: WorkflowStep["status"] = isLost
     ? "blocked"
-    : reservedIsCurrent
-      ? "current"
-      : reservedIsCompleted
-        ? "completed"
-        : currentForwardIndex >= reservationReadyIndex
-          ? "next"
-          : "next";
+    : hasActiveReservation
+      ? "completed"
+      : currentForwardIndex >= reservationReadyIndex
+        ? "next"
+        : "next";
 
   return [
-    ...opportunityForwardStages.slice(0, reservationReadyIndex + 1).map((stageName, index) => buildForwardStageStep(stageName, index)),
+    ...opportunityForwardStages.map((stageName, index) => buildForwardStageStep(stageName, index)),
     {
-      id: "Reserved",
-      title: "Reserved",
-      status: reservedStatus,
+      id: "moved-to-reservation",
+      title: "Moved to Reservation",
+      status: movedToReservationStatus,
       timestamp: activeReservation?.createdAt ?? null,
       user: activeReservation?.createdBy.name ?? null,
       role: activeReservation?.createdBy.role ?? "CRM User",
       summary: hasActiveReservation
-        ? `Unit ${activeReservation?.unit.unitCode ?? "-"} reserved (${activeReservation?.reservationNo ?? "pending"}).`
+        ? `Opportunity chapter is complete. Continue in Reservations (${activeReservation?.reservationNo ?? "pending"}).`
         : currentForwardIndex >= reservationReadyIndex
           ? `Create a reservation using ${MOVE_TO_CTA.reservation}.`
           : "This becomes available after Reservation Ready.",
       details: [
-        { label: "Action", value: hasActiveReservation ? "View / approve reservation" : MOVE_TO_CTA.reservation },
+        { label: "Next", value: MOVE_TO_CTA.reservation },
         { label: "Reservation", value: activeReservation?.reservationNo },
         { label: "Unit", value: activeReservation?.unit.unitCode ?? opportunity.proposedUnitCode },
         { label: "Inventory Result", value: hasActiveReservation ? "Unit is Reserved" : "Selected unit becomes Reserved" }
-      ]
-    },
-    buildForwardStageStep("Proposal", opportunityForwardStages.indexOf("Proposal")),
-    {
-      id: "Lost",
-      title: "Lost",
-      status: isLost ? "current" : "next",
-      timestamp: isLost ? opportunity.updatedAt : null,
-      user: isLost ? opportunity.updatedBy.name : null,
-      role: "CRM User",
-      summary: isLost ? opportunity.remarks : "Customer can be marked lost from any stage using the Mark Lost action.",
-      details: [
-        { label: "Lost Reason", value: opportunity.lostReason.name },
-        { label: "Status", value: opportunity.status }
       ]
     }
   ];
@@ -317,6 +306,14 @@ export function OpportunitiesPage() {
     ...referenceQueryDefaults
   });
 
+  const visitTypesQuery = useQuery({
+    queryKey: ["reference", "OPPORTUNITY", "VISIT_TYPE"],
+    queryFn: () => getReferenceFamily("OPPORTUNITY", "VISIT_TYPE"),
+    ...referenceQueryDefaults
+  });
+
+  const visitTypeOptions = visitTypesQuery.data ?? [];
+  const defaultVisitType = visitTypeOptions[0]?.level2Code ?? "IN_PERSON";
   const opportunitiesQuery = useQuery({
     queryKey: ["opportunities", search, page, listSort.sortBy, listSort.sortDir],
     queryFn: () =>
@@ -623,15 +620,13 @@ export function OpportunitiesPage() {
   const scheduledSiteVisits = (selectedOpportunity?.siteVisits ?? []).filter((visit) => visit.status === "SCHEDULED");
   const rawNextStageName = isSelectedOpportunityLost ? null : nextOpportunityStageName(selectedOpportunity?.opportunityStage.name);
   const nextStageName =
-    rawNextStageName === "Proposal" && !hasActiveOpportunityReservation
+    rawNextStageName === "Site Visit"
       ? null
-      : rawNextStageName === "Site Visit"
+      : rawNextStageName === "Negotiation" &&
+          selectedOpportunity?.opportunityStage.name === "Site Visit" &&
+          !hasCompletedSiteVisit
         ? null
-        : rawNextStageName === "Negotiation" &&
-            selectedOpportunity?.opportunityStage.name === "Site Visit" &&
-            !hasCompletedSiteVisit
-          ? null
-          : rawNextStageName;
+        : rawNextStageName;
   const awaitsSiteVisitSchedule =
     !isSelectedOpportunityLost &&
     (selectedOpportunity?.opportunityStage.name === "Open" || selectedOpportunity?.opportunityStage.name === "Qualified");
@@ -1072,90 +1067,25 @@ export function OpportunitiesPage() {
                       {stageMutation.isPending ? "Saving..." : "Continue to Reservation Ready"}
                     </button>
                   </ContinuePanel>
-                ) : !isSelectedOpportunityLost && selectedOpportunity.opportunityStage.name === "Proposal" && hasActiveOpportunityReservation ? (
+                ) : !isSelectedOpportunityLost &&
+                  hasActiveOpportunityReservation &&
+                  (selectedOpportunity.opportunityStage.name === "Reservation Ready" ||
+                    selectedOpportunity.opportunityStage.name === "Proposal") ? (
                   <ContinuePanel
-                    nowLabel="Proposal stage"
-                    nowSummary={`Active reservation on unit ${activeOpportunityReservation?.unit.unitCode ?? "-"}.`}
-                    nextLabel={MOVE_TO_CTA.proposal}
-                    nextSummary="Open the proposal form with reservation pricing pre-filled."
-                    notesHint={
-                      selectedOpportunity.remarks?.trim()
-                        ? "Existing remarks will be used if you leave this blank."
-                        : "Required before moving to proposal."
-                    }
-                    notesPlaceholder="Why is this ready for proposal? Buyer confirmation, commercial points…"
-                    notesValue={actionNotes}
-                    onNotesChange={setActionNotes}
+                    nowLabel="Opportunity complete"
+                    nowSummary={`${activeOpportunityReservation?.reservationNo} · Unit ${activeOpportunityReservation?.unit.unitCode ?? "-"} is reserved.`}
+                    nextLabel={MOVE_TO_CTA.reservation}
+                    nextSummary="Open Reservations to approve and continue the sales journey."
                   >
                     <button
-                      className="crm-secondary-button crm-fit-button"
+                      className="crm-primary-button crm-fit-button"
                       onClick={() => navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)}
                       type="button"
                     >
-                      View Reservation
-                    </button>
-                    <button
-                      className="crm-primary-button crm-fit-button"
-                      onClick={() => {
-                        const notes = requireActionNotes(selectedOpportunity.remarks, MOVE_TO_CTA.proposal);
-                        if (!notes) return;
-                        openProposalHandoff(selectedOpportunity.id, selectedOpportunity.opportunityNo, notes);
-                      }}
-                      type="button"
-                    >
-                      {MOVE_TO_CTA.proposal}
+                      Open Reservations
                     </button>
                   </ContinuePanel>
                 ) : !isSelectedOpportunityLost && selectedOpportunity.opportunityStage.name === "Reservation Ready" ? (
-                  hasActiveOpportunityReservation ? (
-                    <ContinuePanel
-                      nowLabel="Reservation created"
-                      nowSummary={`${activeOpportunityReservation?.reservationNo} · Unit ${activeOpportunityReservation?.unit.unitCode ?? "-"} is reserved.`}
-                      nextLabel={nextStageName ? `Move to ${nextStageName}` : MOVE_TO_CTA.proposal}
-                      nextSummary="Approve the reservation if needed, then continue to proposal."
-                      notesHint={
-                        selectedOpportunity.remarks?.trim()
-                          ? "Existing remarks will be used if you leave this blank."
-                          : "Required before moving to the next stage."
-                      }
-                      notesPlaceholder="Stage move notes…"
-                      notesValue={actionNotes}
-                      onNotesChange={setActionNotes}
-                    >
-                      <button
-                        className="crm-secondary-button crm-fit-button"
-                        onClick={() => navigate(`/reservations?selected=${activeOpportunityReservation?.id}`)}
-                        type="button"
-                      >
-                        View Reservation
-                      </button>
-                      {nextStageName && nextStage ? (
-                        <button
-                          className="crm-primary-button crm-fit-button"
-                          disabled={stageMutation.isPending}
-                          onClick={() => {
-                            if (!selectedOpportunityId || !nextStage) return;
-                            const notes = requireActionNotes(
-                              selectedOpportunity.remarks,
-                              `moving to ${nextStageName}`
-                            );
-                            if (!notes) return;
-                            stageMutation.mutate({
-                              id: selectedOpportunityId,
-                              payload: {
-                                opportunityStageRefId: nextStage.id,
-                                probabilityPercent: pickNumber(suggestedProbability(nextStage.level2Name)),
-                                remarks: notes
-                              }
-                            });
-                          }}
-                          type="button"
-                        >
-                          {stageMutation.isPending ? "Moving..." : `Move to ${nextStageName}`}
-                        </button>
-                      ) : null}
-                    </ContinuePanel>
-                  ) : (
                     <ContinuePanel
                       nowLabel="Reservation Ready"
                       nowSummary="Add a short note, then hold an available unit for this buyer."
@@ -1180,7 +1110,6 @@ export function OpportunitiesPage() {
                         {MOVE_TO_CTA.reservation}
                       </button>
                     </ContinuePanel>
-                  )
                 ) : null}
 
                 <section className="crm-opportunity-actions">
@@ -1197,8 +1126,18 @@ export function OpportunitiesPage() {
                           <label className="crm-field">
                             <span className="crm-label">Visit Type</span>
                             <select className="crm-input" {...siteVisitForm.register("visitType")}>
-                              <option value="IN_PERSON">In-person</option>
-                              <option value="VIRTUAL">Virtual</option>
+                              {visitTypeOptions.length ? (
+                                visitTypeOptions.map((item) => (
+                                  <option key={item.id} value={item.level2Code}>
+                                    {item.level2Name}
+                                  </option>
+                                ))
+                              ) : (
+                                <>
+                                  <option value="IN_PERSON">In-person</option>
+                                  <option value="VIRTUAL">Virtual</option>
+                                </>
+                              )}
                             </select>
                           </label>
                           <label className="crm-field">
@@ -1291,7 +1230,7 @@ export function OpportunitiesPage() {
                               <option value="">Select visit</option>
                               {(selectedOpportunity.siteVisits ?? []).map((visit) => (
                                 <option key={visit.id} value={visit.id}>
-                                  {formatDate(visit.visitDate)} · {visitTypeLabel(visit.visitType)} · {visitStatusLabel(visit.status)}
+                                  {formatDate(visit.visitDate)} · {visitTypeLabel(visit.visitType, visitTypeOptions)} · {visitStatusLabel(visit.status)}
                                 </option>
                               ))}
                             </select>
@@ -1347,8 +1286,18 @@ export function OpportunitiesPage() {
                           <label className="crm-field">
                             <span className="crm-label">Visit Type</span>
                             <select className="crm-input" {...siteVisitForm.register("visitType")}>
-                              <option value="IN_PERSON">In-person</option>
-                              <option value="VIRTUAL">Virtual</option>
+                              {visitTypeOptions.length ? (
+                                visitTypeOptions.map((item) => (
+                                  <option key={item.id} value={item.level2Code}>
+                                    {item.level2Name}
+                                  </option>
+                                ))
+                              ) : (
+                                <>
+                                  <option value="IN_PERSON">In-person</option>
+                                  <option value="VIRTUAL">Virtual</option>
+                                </>
+                              )}
                             </select>
                           </label>
                           <label className="crm-field">
@@ -1511,7 +1460,7 @@ export function OpportunitiesPage() {
                   {selectedOpportunity.siteVisits.map((visit) => (
                     <article key={visit.id}>
                       <strong>
-                        {formatDate(visit.visitDate)} · {visitTypeLabel(visit.visitType)} · {visitStatusLabel(visit.status)}
+                        {formatDate(visit.visitDate)} · {visitTypeLabel(visit.visitType, visitTypeOptions)} · {visitStatusLabel(visit.status)}
                       </strong>
                       <span>{visit.proposedUnitCode ?? "No unit selected"}</span>
                       <p>{visit.remarks ?? "No outcome notes yet."}</p>
@@ -1537,7 +1486,7 @@ export function OpportunitiesPage() {
                               setEditingVisitId(visit.id);
                               siteVisitForm.reset({
                                 visitDate: toFormDateTime(visit.visitDate),
-                                visitType: visit.visitType === "VIRTUAL" ? "VIRTUAL" : "IN_PERSON",
+                                visitType: visit.visitType || defaultVisitType,
                                 proposedUnitCode: visit.proposedUnitCode ?? "",
                                 remarks: visit.remarks ?? ""
                               });

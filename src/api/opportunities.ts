@@ -46,7 +46,7 @@ export type OpportunityDetail = Opportunity & {
   siteVisits: Array<{
     id: string;
     visitDate: string | null;
-    visitType: "IN_PERSON" | "VIRTUAL";
+    visitType: string;
     projectCode: string | null;
     proposedUnitCode: string | null;
     assignedToUser: NamedLink;
@@ -118,7 +118,7 @@ export async function scheduleSiteVisit(
   id: string,
   payload: {
     visitDate: string;
-    visitType: "IN_PERSON" | "VIRTUAL";
+    visitType: string;
     proposedUnitCode?: string;
     remarks?: string;
   }
@@ -132,7 +132,7 @@ export async function updateSiteVisit(
   visitId: string,
   payload: {
     visitDate?: string;
-    visitType?: "IN_PERSON" | "VIRTUAL";
+    visitType?: string;
     status?: "SCHEDULED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
     proposedUnitCode?: string;
     remarks?: string;

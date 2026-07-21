@@ -21,6 +21,9 @@ export type Lead = {
   leadNo: string;
   leadTitle: string | null;
   firstName: string | null;
+  prospectType?: NamedLink;
+  title?: NamedLink;
+  companyName?: string | null;
   leadSource: NamedLink;
   captureChannel: NamedLink;
   campaign: NamedLink;
@@ -84,7 +87,35 @@ export type Lead = {
   remarks: string | null;
 };
 
+export type LeadAddress = {
+  id?: string;
+  addressType: NamedLink;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string | null;
+  countryCode: string | null;
+  countryName?: string | null;
+  postalCode: string | null;
+  remarks: string | null;
+};
+
+export type LeadIdentityDocument = {
+  id?: string;
+  identityType: NamedLink;
+  documentNumber: string;
+  issuingCountryCode: string | null;
+  issuingCountryName?: string | null;
+  expiryDate: string | null;
+  remarks: string | null;
+};
+
 export type LeadDetail = Lead & {
+  addresses?: LeadAddress[];
+  identityDocuments?: LeadIdentityDocument[];
+  opportunity?: {
+    id: string | null;
+    opportunityNo: string | null;
+  };
   assignmentHistory: Array<{
     id: string;
     assignedFromUser: NamedLink;
@@ -95,11 +126,32 @@ export type LeadDetail = Lead & {
   }>;
 };
 
+export type LeadAddressInput = {
+  addressTypeRefId: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city?: string;
+  countryCode?: string;
+  postalCode?: string;
+  remarks?: string;
+};
+
+export type LeadIdentityDocumentInput = {
+  identityTypeRefId: string;
+  documentNumber: string;
+  issuingCountryCode?: string;
+  expiryDate?: string;
+  remarks?: string;
+};
+
 export type CreateLeadPayload = {
   firstName?: string;
   lastName?: string;
   leadTitle?: string;
   contactName?: string;
+  prospectTypeRefId?: string;
+  titleRefId?: string;
+  companyName?: string;
   mobileNo?: string;
   whatsappNo?: string;
   email?: string;
@@ -138,6 +190,8 @@ export type CreateLeadPayload = {
   dateGenerated?: string;
   scoreTotal?: number;
   remarks?: string;
+  addresses?: LeadAddressInput[];
+  identityDocuments?: LeadIdentityDocumentInput[];
 };
 
 export type UpdateLeadPayload = CreateLeadPayload;
@@ -215,6 +269,8 @@ export async function checkLeadDuplicate(params: {
   lastName: string;
   mobileNo: string;
   email: string;
+  passportNumber?: string;
+  nationalIdNumber?: string;
   excludeLeadId?: string;
 }) {
   const response = await apiClient.get<LeadDuplicateCheck>("/leads/check-duplicate", { params });

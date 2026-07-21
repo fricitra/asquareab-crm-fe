@@ -4437,6 +4437,12 @@ textarea {
   min-width: 760px;
 }
 
+.crm-reference-shell .crm-recent-activity-list .crm-dashboard-record-head,
+.crm-reference-shell .crm-recent-activity-list article {
+  grid-template-columns: 64px minmax(180px, 0.7fr) minmax(200px, 1fr) minmax(140px, 0.55fr) minmax(170px, 0.65fr);
+  min-width: 920px;
+}
+
 .crm-reference-shell .crm-dashboard-record-head {
   background: #173450;
   color: #fff;
@@ -4577,6 +4583,11 @@ textarea {
   .crm-reference-shell .crm-dashboard-record-head,
   .crm-reference-shell .crm-dashboard-record-list article {
     min-width: 700px;
+  }
+
+  .crm-reference-shell .crm-recent-activity-list .crm-dashboard-record-head,
+  .crm-reference-shell .crm-recent-activity-list article {
+    min-width: 860px;
   }
 
   body {
